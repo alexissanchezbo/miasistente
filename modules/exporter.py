@@ -8,7 +8,6 @@ from openpyxl.styles import (
     Font, PatternFill, Alignment, Border, Side, numbers
 )
 from openpyxl.utils import get_column_letter
-from openpyxl.formatting.rule import Rule, IconSet, FormatObject
 
 # ── Paleta de colores ────────────────────────────────────────────────────────
 C_TITULO_BG   = "1A1A2E"   # Azul marino muy oscuro
@@ -233,27 +232,7 @@ def _write_pyg_sheet(ws, empresa, titulo, filas, value_cols, show_pct=True, pct_
             else:
                 col_idx += 1
 
-    # ── Formato condicional de iconos en columnas de variación ───────────────
-    if pct_mode == "variation" and var_pct_col_letters:
-        end_row = ws.max_row
-        for col_letter in var_pct_col_letters:
-            cf_range = f"{col_letter}{data_start_row}:{col_letter}{end_row}"
-            # 3Triangles estándar:
-            #   valor < 0  → ▼ (baja)   con el color asignado por el número de formato [Green]
-            #   valor ≈ 0  → ▷ (plano)
-            #   valor > 0  → ▲ (sube)   con el color asignado por el número de formato [Red]
-            # showValue=False: el icono reemplaza la celda; con True convive con el número
-            icon_set = IconSet(
-                iconSet="3Triangles",
-                cfvo=[
-                    FormatObject(type="num", val=-1e9),
-                    FormatObject(type="num", val=-0.001),
-                    FormatObject(type="num", val=0.001),
-                ],
-                showValue=True,
-            )
-            rule = Rule(type="iconSet", iconSet=icon_set)
-            ws.conditional_formatting.add(cf_range, rule)
+    # (formato condicional de íconos manejado por el número de formato FMT_VAR_PCT)
 
     # ── Anchos de columna ────────────────────────────────────────────────────
     ws.column_dimensions["A"].width = 12
