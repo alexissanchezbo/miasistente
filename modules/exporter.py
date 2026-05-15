@@ -62,6 +62,13 @@ def _write_pyg_sheet(ws, empresa, titulo, filas, value_cols, show_pct=True, pct_
                  "variation" → variación % vs período inmediato anterior
                                (▲ rojo si sube · ▼ verde si baja)
     """
+    # ── Detectar cuentas madre (tienen hijos en la lista) ───────────────────
+    all_cods = {str(f.get("cod", "")) for f in filas if f.get("tipo") == "data"}
+    parent_cods = {
+        cod for cod in all_cods
+        if any(c.startswith(cod + ".") for c in all_cods if c != cod)
+    }
+
     # ── Encabezados ──────────────────────────────────────────────────────────
     ws.row_dimensions[1].height = 22
     ws.row_dimensions[2].height = 18
@@ -159,8 +166,11 @@ def _write_pyg_sheet(ws, empresa, titulo, filas, value_cols, show_pct=True, pct_
             bg = "2E4057" if not alt else "3D566E"
             fg, bold, size = "DDEEFF", True, 9
         else:
-            bg = C_DETAIL_ALT if alt else C_DETAIL_BG
-            fg, bold, size = C_DETAIL_FG, False, 9
+            bg   = C_DETAIL_ALT if alt else C_DETAIL_BG
+            fg   = C_DETAIL_FG
+            # Cuenta madre en nivel de detalle → negrita
+            bold = (cod in parent_cods)
+            size = 9
 
         if tipo == "data" and nivel >= 3:
             alt = not alt
