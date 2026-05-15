@@ -553,20 +553,26 @@ if _df_pers_ref is not None:
 _opciones_sb = [_MANUAL_LIBRE] + _nombres_maestro
 
 # ── Formulario ─────────────────────────────────────────────────────────────────
+_OTRO = "— Escribir nombre que no está en la lista —"
+_opciones_final = _nombres_maestro + [_OTRO] if _nombres_maestro else [_OTRO]
+
 with st.form("form_pago_manual", clear_on_submit=True):
     fc1, fc2, fc3 = st.columns([2, 2.5, 1])
 
     with fc1:
-        _nombre_input = st.text_input(
+        _sel = st.selectbox(
             "Nombre",
-            placeholder="Escribe el nombre del beneficiario…",
-            help="Se buscará automáticamente en el Maestro de Personas para completar los datos bancarios.",
+            options=_opciones_final,
+            index=None,
+            placeholder="Escribe para buscar…",
+            help="Escribe las primeras letras para filtrar. Los datos bancarios se completan automáticamente.",
         )
-        # Sugerencias en tiempo real (solo informativas, dentro del form)
-        if _nombre_input.strip() and _nombres_maestro:
-            _sugs = [n for n in _nombres_maestro if _nombre_input.strip().upper() in n.upper()][:5]
-            if _sugs:
-                st.caption("💡 " + "  ·  ".join(_sugs))
+        _nombre_otro = ""
+        if _sel == _OTRO:
+            _nombre_otro = st.text_input(
+                "Nombre (no está en el maestro)",
+                placeholder="Ej. JUAN PEREZ",
+            )
 
     with fc2:
         _desc = st.text_input(
@@ -581,7 +587,7 @@ with st.form("form_pago_manual", clear_on_submit=True):
     _agregar = st.form_submit_button("➕ Agregar", type="primary", use_container_width=True)
 
     if _agregar:
-        _nombre = _nombre_input.strip()
+        _nombre = (_nombre_otro.strip() if _sel == _OTRO else (_sel or "").strip())
         _err = []
         if not _nombre:
             _err.append("Debes indicar el nombre.")
