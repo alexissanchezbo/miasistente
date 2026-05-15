@@ -8,6 +8,7 @@ from openpyxl.styles import (
     Font, PatternFill, Alignment, Border, Side, numbers
 )
 from openpyxl.utils import get_column_letter
+from openpyxl.formatting.rule import Rule, IconSet, FormatObject
 
 # ── Paleta de colores ────────────────────────────────────────────────────────
 C_TITULO_BG   = "1A1A2E"   # Azul marino muy oscuro
@@ -31,6 +32,8 @@ C_OBS_INFO    = "EAF4FB"   # Fondo info
 FMT_MONEY   = '#,##0.00'
 FMT_MONEY_N = '#,##0.00;[Red]-#,##0.00'
 FMT_PCT     = '0.0%'
+# ▲ rojo = sube · ▼ verde = baja · — = sin cambio
+FMT_VAR_PCT = '[Red]"▲ "0.0%;[Green]"▼ "0.0%;"  —"'
 
 
 def _fill(hex_color):
@@ -51,18 +54,21 @@ def _nivel_cuenta(cod):
     return str(cod).count(".")
 
 
-def _write_pyg_sheet(ws, empresa, titulo, filas, value_cols, show_pct=True):
+def _write_pyg_sheet(ws, empresa, titulo, filas, value_cols, show_pct=True, pct_mode="income"):
     """
     Escribe una hoja del PyG con las filas y columnas dadas.
-    filas: lista de dicts {'tipo', 'cod', 'concepto', 'values', 'pct'}
-    value_cols: lista de nombres de columnas de valor
+    filas      : lista de dicts {'tipo', 'cod', 'concepto', 'values', 'pct'}
+    value_cols : lista de nombres de columnas de valor
+    pct_mode   : "income"    → % sobre ingresos (default)
+                 "variation" → variación % vs período inmediato anterior
+                               (▲ rojo si sube · ▼ verde si baja)
     """
     # ── Encabezados ──────────────────────────────────────────────────────────
     ws.row_dimensions[1].height = 22
     ws.row_dimensions[2].height = 18
     ws.row_dimensions[3].height = 14
 
-    total_cols = 2 + (len(value_cols) * (2 if show_pct else 1))  # cod+concepto + valores
+    total_cols = 2 + (len(value_cols) * (2 if show_pct else 1))
     ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=total_cols)
     c = ws.cell(1, 1, empresa)
     c.font = _font(bold=True, color=C_TITULO_FG, size=13)
@@ -75,11 +81,10 @@ def _write_pyg_sheet(ws, empresa, titulo, filas, value_cols, show_pct=True):
     c.fill = _fill(C_HEADER_BG)
     c.alignment = _align("center")
 
-    # Fila en blanco
     for col in range(1, total_cols + 1):
         ws.cell(3, col).fill = _fill(C_HEADER_BG)
 
-    # ── Fila de columnas ────────────────────────────────────────────────────
+    # ── Fila de nombres de columnas ─────────────────────────────────────────
     ws.row_dimensions[4].height = 28
     ws.cell(4, 1, "Cód.").font = _font(bold=True, color=C_HEADER_FG, size=9)
     ws.cell(4, 1).fill = _fill(C_HEADER_BG)
@@ -99,18 +104,27 @@ def _write_pyg_sheet(ws, empresa, titulo, filas, value_cols, show_pct=True):
         c.alignment = _align("center")
         col_idx += 2 if show_pct else 1
 
-    # Subencabezados $ / %
+    # ── Subencabezados $ / % (o Var.%) ──────────────────────────────────────
     if show_pct:
         ws.row_dimensions[5].height = 14
         ws.cell(5, 1).fill = _fill(C_HEADER_BG)
         ws.cell(5, 2).fill = _fill(C_HEADER_BG)
         col_idx = 3
-        for vc in value_cols:
+        for vi, vc in enumerate(value_cols):
             c1 = ws.cell(5, col_idx, "$")
             c1.font = _font(bold=True, color=C_HEADER_FG, size=8, italic=True)
             c1.fill = _fill(C_HEADER_BG)
             c1.alignment = _align("center")
-            c2 = ws.cell(5, col_idx + 1, "%")
+
+            # Primer período en modo variación: sin subencabezado de %
+            if pct_mode == "variation" and vi == 0:
+                lbl_pct = ""
+            elif pct_mode == "variation":
+                lbl_pct = "Var.%"
+            else:
+                lbl_pct = "%"
+
+            c2 = ws.cell(5, col_idx + 1, lbl_pct)
             c2.font = _font(bold=True, color=C_HEADER_FG, size=8, italic=True)
             c2.fill = _fill(C_HEADER_BG)
             c2.alignment = _align("center")
@@ -120,49 +134,39 @@ def _write_pyg_sheet(ws, empresa, titulo, filas, value_cols, show_pct=True):
         data_start_row = 5
 
     # ── Datos ────────────────────────────────────────────────────────────────
+    # Registrar columnas de variación para aplicar formato condicional al final
+    var_pct_col_letters = []   # letras de columna Excel de cada Var.%
+
     alt = False
     for fila in filas:
-        tipo    = fila.get("tipo", "data")
-        cod     = str(fila.get("cod", ""))
+        tipo     = fila.get("tipo", "data")
+        cod      = str(fila.get("cod", ""))
         concepto = str(fila.get("concepto", ""))
-        values  = fila.get("values", {})
-        pcts    = fila.get("pct", {})
-        nivel   = _nivel_cuenta(cod)
+        values   = fila.get("values", {})
+        pcts     = fila.get("pct", {})
+        nivel    = _nivel_cuenta(cod)
 
         row = ws.max_row + 1
         ws.row_dimensions[row].height = 14 if tipo == "data" else 16
 
         # ── Colores según tipo y nivel ───────────────────────────────────────
         if tipo == "subtotal":
-            bg = C_SUBTOT_BG
-            fg = C_SUBTOT_FG
-            bold = True
-            size = 10
-        elif nivel == 0:  # Raíz: cuentas 4, 5
-            bg = C_SEC1_BG
-            fg = C_SEC1_FG
-            bold = True
-            size = 10
-        elif nivel == 1:  # 5.1, 5.2
-            bg = C_SEC2_BG
-            fg = C_SEC2_FG
-            bold = True
-            size = 9
-        elif nivel == 2:  # 5.1.1, 5.1.2...
+            bg, fg, bold, size = C_SUBTOT_BG, C_SUBTOT_FG, True, 10
+        elif nivel == 0:
+            bg, fg, bold, size = C_SEC1_BG, C_SEC1_FG, True, 10
+        elif nivel == 1:
+            bg, fg, bold, size = C_SEC2_BG, C_SEC2_FG, True, 9
+        elif nivel == 2:
             bg = "2E4057" if not alt else "3D566E"
-            fg = "DDEEFF"
-            bold = True
-            size = 9
+            fg, bold, size = "DDEEFF", True, 9
         else:
             bg = C_DETAIL_ALT if alt else C_DETAIL_BG
-            fg = C_DETAIL_FG
-            bold = False
-            size = 9
+            fg, bold, size = C_DETAIL_FG, False, 9
 
         if tipo == "data" and nivel >= 3:
             alt = not alt
 
-        # ── Escribir celdas ─────────────────────────────────────────────────
+        # ── Código y concepto ────────────────────────────────────────────────
         c_cod = ws.cell(row, 1, cod if tipo == "data" else "")
         c_cod.font = _font(bold=bold, color=fg, size=size - 1)
         c_cod.fill = _fill(bg)
@@ -174,31 +178,82 @@ def _write_pyg_sheet(ws, empresa, titulo, filas, value_cols, show_pct=True):
         c_con.fill = _fill(bg)
         c_con.alignment = _align("left", wrap=True)
 
+        # ── Valores ──────────────────────────────────────────────────────────
         col_idx = 3
-        for vc in value_cols:
-            val = values.get(vc, 0.0) or 0.0
-            pct = pcts.get(vc, 0.0) or 0.0
+        for vi, vc in enumerate(value_cols):
+            val      = values.get(vc, 0.0) or 0.0
+            pct      = pcts.get(vc, 0.0)   or 0.0
 
-            # Color rojo si negativo (solo en filas de detalle o subtotal)
             val_fg = fg
             if val < 0 and nivel >= 2:
                 val_fg = C_NEG_FG if bg in (C_DETAIL_BG, C_DETAIL_ALT) else "FFAAAA"
 
             c_val = ws.cell(row, col_idx, val)
             c_val.number_format = FMT_MONEY
-            c_val.font = _font(bold=bold, color=val_fg, size=size)
-            c_val.fill = _fill(bg)
+            c_val.font  = _font(bold=bold, color=val_fg, size=size)
+            c_val.fill  = _fill(bg)
             c_val.alignment = _align("right")
 
             if show_pct:
-                c_pct = ws.cell(row, col_idx + 1, pct / 100)
-                c_pct.number_format = FMT_PCT
-                c_pct.font = _font(bold=False, color=fg, size=size - 1, italic=True)
-                c_pct.fill = _fill(bg)
-                c_pct.alignment = _align("right")
+                pct_col_letter = get_column_letter(col_idx + 1)
+
+                if pct_mode == "variation":
+                    if vi == 0:
+                        # Primer período: celda vacía
+                        c_pct = ws.cell(row, col_idx + 1, None)
+                        c_pct.number_format = "@"
+                    else:
+                        prev_vc  = value_cols[vi - 1]
+                        prev_val = values.get(prev_vc, 0.0) or 0.0
+                        if abs(prev_val) > 0.0001:
+                            variation = (val - prev_val) / abs(prev_val)
+                        else:
+                            variation = None   # indeterminado
+
+                        c_pct = ws.cell(row, col_idx + 1, variation)
+                        c_pct.number_format = FMT_VAR_PCT if variation is not None else "@"
+
+                        # Registrar la columna para el formato condicional de iconos
+                        if pct_col_letter not in var_pct_col_letters:
+                            var_pct_col_letters.append(pct_col_letter)
+
+                    c_pct.font      = _font(bold=False, color=fg, size=size - 1)
+                    c_pct.fill      = _fill(bg)
+                    c_pct.alignment = _align("center")
+
+                else:
+                    # Modo normal: % sobre ingresos
+                    c_pct = ws.cell(row, col_idx + 1, pct / 100)
+                    c_pct.number_format = FMT_PCT
+                    c_pct.font      = _font(bold=False, color=fg, size=size - 1, italic=True)
+                    c_pct.fill      = _fill(bg)
+                    c_pct.alignment = _align("right")
+
                 col_idx += 2
             else:
                 col_idx += 1
+
+    # ── Formato condicional de iconos en columnas de variación ───────────────
+    if pct_mode == "variation" and var_pct_col_letters:
+        end_row = ws.max_row
+        for col_letter in var_pct_col_letters:
+            cf_range = f"{col_letter}{data_start_row}:{col_letter}{end_row}"
+            # 3Triangles estándar:
+            #   valor < 0  → ▼ (baja)   con el color asignado por el número de formato [Green]
+            #   valor ≈ 0  → ▷ (plano)
+            #   valor > 0  → ▲ (sube)   con el color asignado por el número de formato [Red]
+            # showValue=False: el icono reemplaza la celda; con True convive con el número
+            icon_set = IconSet(
+                iconSet="3Triangles",
+                cfvo=[
+                    FormatObject(type="num", val=-1e9),
+                    FormatObject(type="num", val=-0.001),
+                    FormatObject(type="num", val=0.001),
+                ],
+                showValue=True,
+            )
+            rule = Rule(type="iconSet", iconSet=icon_set)
+            ws.conditional_formatting.add(cf_range, rule)
 
     # ── Anchos de columna ────────────────────────────────────────────────────
     ws.column_dimensions["A"].width = 12
@@ -207,12 +262,11 @@ def _write_pyg_sheet(ws, empresa, titulo, filas, value_cols, show_pct=True):
     for _ in value_cols:
         ws.column_dimensions[get_column_letter(col_idx)].width = 16
         if show_pct:
-            ws.column_dimensions[get_column_letter(col_idx + 1)].width = 8
+            ws.column_dimensions[get_column_letter(col_idx + 1)].width = 10
             col_idx += 2
         else:
             col_idx += 1
 
-    # Fija las dos primeras columnas y las primeras 5 filas
     ws.freeze_panes = ws.cell(data_start_row, 3)
 
 
@@ -231,7 +285,6 @@ def _write_observaciones_sheet(ws, observaciones, empresa):
     c.fill = _fill(C_HEADER_BG)
     c.alignment = _align("center")
 
-    # Encabezados
     ws.row_dimensions[4].height = 20
     headers = ["#", "Categoría", "Nivel", "Observación"]
     col_widths = [5, 32, 12, 80]
@@ -242,40 +295,31 @@ def _write_observaciones_sheet(ws, observaciones, empresa):
         c.alignment = _align("center" if i != 4 else "left")
         ws.column_dimensions[get_column_letter(i)].width = w
 
-    nivel_colors = {
-        "ALERTA": C_OBS_ALERTA,
-        "AVISO":  C_OBS_AVISO,
-        "INFO":   C_OBS_INFO,
-    }
-    nivel_fg = {
-        "ALERTA": "922B21",
-        "AVISO":  "7D6608",
-        "INFO":   "1A5276",
-    }
+    nivel_colors = {"ALERTA": C_OBS_ALERTA, "AVISO": C_OBS_AVISO, "INFO": C_OBS_INFO}
+    nivel_fg     = {"ALERTA": "922B21",      "AVISO": "7D6608",    "INFO": "1A5276"}
 
     for idx, obs in enumerate(observaciones, 1):
-        row = ws.max_row + 1
+        row  = ws.max_row + 1
         ws.row_dimensions[row].height = 30
-
         nivel = obs.get("nivel", "INFO")
-        bg = nivel_colors.get(nivel, C_OBS_INFO)
-        fg_n = nivel_fg.get(nivel, "000000")
+        bg    = nivel_colors.get(nivel, C_OBS_INFO)
+        fg_n  = nivel_fg.get(nivel, "000000")
 
-        ws.cell(row, 1, idx).font = _font(size=9, color="555555")
-        ws.cell(row, 1).fill = _fill(bg)
-        ws.cell(row, 1).alignment = _align("center")
+        ws.cell(row, 1, idx).font          = _font(size=9, color="555555")
+        ws.cell(row, 1).fill               = _fill(bg)
+        ws.cell(row, 1).alignment          = _align("center")
 
         ws.cell(row, 2, obs.get("categoria", "")).font = _font(bold=True, size=9, color=fg_n)
-        ws.cell(row, 2).fill = _fill(bg)
-        ws.cell(row, 2).alignment = _align("left", wrap=True)
+        ws.cell(row, 2).fill               = _fill(bg)
+        ws.cell(row, 2).alignment          = _align("left", wrap=True)
 
-        ws.cell(row, 3, nivel).font = _font(bold=True, size=9, color=fg_n)
-        ws.cell(row, 3).fill = _fill(bg)
-        ws.cell(row, 3).alignment = _align("center")
+        ws.cell(row, 3, nivel).font        = _font(bold=True, size=9, color=fg_n)
+        ws.cell(row, 3).fill               = _fill(bg)
+        ws.cell(row, 3).alignment          = _align("center")
 
         ws.cell(row, 4, obs.get("descripcion", "")).font = _font(size=9)
-        ws.cell(row, 4).fill = _fill(bg)
-        ws.cell(row, 4).alignment = _align("left", wrap=True)
+        ws.cell(row, 4).fill               = _fill(bg)
+        ws.cell(row, 4).alignment          = _align("left", wrap=True)
 
     ws.freeze_panes = "A5"
 
@@ -292,10 +336,14 @@ def exportar_excel(
 ):
     wb = Workbook()
 
-    # ── Pestaña 1: Por Mes ───────────────────────────────────────────────────
+    # ── Pestaña 1: Por Mes — variación % vs período anterior ────────────────
     ws_mes = wb.active
     ws_mes.title = "P&G por Mes"
-    _write_pyg_sheet(ws_mes, empresa, titulo_mes, filas_mes, value_cols_mes)
+    _write_pyg_sheet(
+        ws_mes, empresa, titulo_mes,
+        filas_mes, value_cols_mes,
+        pct_mode="variation",          # ← ▲▼ variación vs mes anterior
+    )
 
     # ── Pestaña 2: Por Proyecto ──────────────────────────────────────────────
     ws_proy = wb.create_sheet("P&G por Proyecto")
