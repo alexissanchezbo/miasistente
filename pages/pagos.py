@@ -557,19 +557,16 @@ with st.form("form_pago_manual", clear_on_submit=True):
     fc1, fc2, fc3 = st.columns([2, 2.5, 1])
 
     with fc1:
-        _sel_nombre = st.selectbox(
+        _nombre_input = st.text_input(
             "Nombre",
-            options=_opciones_sb,
-            index=0,
-            help="Escribe las primeras letras para filtrar la lista del Maestro de Personas",
+            placeholder="Escribe el nombre del beneficiario…",
+            help="Se buscará automáticamente en el Maestro de Personas para completar los datos bancarios.",
         )
-        # Solo mostrar el campo libre si elige la opción manual
-        _nombre_libre = ""
-        if _sel_nombre == _MANUAL_LIBRE:
-            _nombre_libre = st.text_input(
-                "Nombre (no está en el maestro)",
-                placeholder="Ej. JUAN PEREZ",
-            )
+        # Sugerencias en tiempo real (solo informativas, dentro del form)
+        if _nombre_input.strip() and _nombres_maestro:
+            _sugs = [n for n in _nombres_maestro if _nombre_input.strip().upper() in n.upper()][:5]
+            if _sugs:
+                st.caption("💡 " + "  ·  ".join(_sugs))
 
     with fc2:
         _desc = st.text_input(
@@ -584,12 +581,7 @@ with st.form("form_pago_manual", clear_on_submit=True):
     _agregar = st.form_submit_button("➕ Agregar", type="primary", use_container_width=True)
 
     if _agregar:
-        # Resolver nombre final
-        _nombre = (
-            _nombre_libre.strip()
-            if _sel_nombre == _MANUAL_LIBRE
-            else _sel_nombre.strip()
-        )
+        _nombre = _nombre_input.strip()
         _err = []
         if not _nombre:
             _err.append("Debes indicar el nombre.")
@@ -599,7 +591,7 @@ with st.form("form_pago_manual", clear_on_submit=True):
             for e in _err:
                 st.error(e)
         else:
-            # Buscar datos bancarios en el Maestro (silencioso, el usuario no lo ve)
+            # Buscar datos bancarios en el Maestro (silencioso)
             _id_p, _tcta, _nrocta, _banco_m = "", "", "", ""
             if _df_pers_ref is not None and _col_rs_pers is not None:
                 _match = _df_pers_ref[
