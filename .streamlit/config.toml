@@ -2,11 +2,11 @@
 headless = true
 
 [theme]
-base                     = "dark"
+base                     = "light"
 primaryColor             = "#C9A84C"
-backgroundColor          = "#0D0D0D"
-secondaryBackgroundColor = "#161616"
-textColor                = "#E8E8E8"
+backgroundColor          = "#FFFFFF"
+secondaryBackgroundColor = "#F5F2EC"
+textColor                = "#1A1A2E"
 font                     = "sans serif"
 
 [browser]

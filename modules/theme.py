@@ -339,7 +339,7 @@ CARDS_LIGHT = """
 def render_toggle():
     """Muestra el toggle de tema en el sidebar y aplica el CSS correspondiente."""
     if "tema" not in st.session_state:
-        st.session_state.tema = "oscuro"
+        st.session_state.tema = "claro"
 
     with st.sidebar:
         st.markdown("---")
