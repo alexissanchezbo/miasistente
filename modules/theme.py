@@ -119,13 +119,16 @@ button[kind="secondary"]:hover { border-color: #333333 !important; color:#000000
 /* ── Progress ── */
 [data-testid="stProgress"] > div > div { background: #444444 !important; }
 
-/* ── Iconos / emojis en escala de grises ── */
+/* ── Todo en escala de grises (imágenes, iconos, emojis, SVGs) ── */
+img, svg, [data-testid="stSidebarNavLink"] span,
+.card-icon, .main-title, .hero-name,
+[data-testid="stImage"] img,
+button img, button svg,
+[data-testid="stMarkdownContainer"] img {
+    filter: grayscale(100%) !important;
+}
+/* Sidebar completo en grayscale para cubrir emojis de navegación */
 section[data-testid="stSidebar"] { filter: grayscale(100%); }
-.card-icon { filter: grayscale(100%); }
-.main-title { filter: grayscale(100%); }
-.mod-eyebrow { filter: grayscale(100%); }
-[data-testid="stHeading"] { filter: grayscale(100%); }
-h1, h2, h3 { filter: grayscale(100%); }
 </style>
 """
 
