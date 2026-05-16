@@ -154,6 +154,9 @@ if generar and todos_listos:
         obs = generar_observaciones(df_mes, df_cc, df_ing, df_bg)
 
         prog.progress(96, "Generando Excel…")
+        import pandas as pd
+        df_mayor_all = pd.concat([df_ing, df_cos], ignore_index=True)
+
         buf = exportar_excel(
             empresa             = empresa,
             filas_mes           = filas_mes,
@@ -164,6 +167,7 @@ if generar and todos_listos:
             value_cols_cc       = vcols_cc,
             observaciones       = obs,
             df_balance          = df_bg,
+            df_mayor_completo   = df_mayor_all,
             titulo_mes          = f"Estado de Resultados Comparativo Mensual  |  {periodo_desc}",
             titulo_proyecto     = (
                 f"Estado de Resultados por Proyecto  |  {periodo_desc}  "

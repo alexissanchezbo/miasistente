@@ -428,6 +428,127 @@ def _write_balance_sheet(ws, empresa, titulo, df_bg):
     ws.freeze_panes = ws.cell(data_start, 1)
 
 
+def _write_sin_asignacion_sheet(ws, df_mayor, empresa):
+    """
+    Escribe una pestaña con dos tablas:
+    1. Transacciones sin Proyecto asignado
+    2. Transacciones sin Centro de Costo asignado
+    """
+    C_SEC = "16213E"
+    C_TBL = "1A3A5C"
+
+    def _bloque(ws, titulo, df_filtrado, start_row):
+        row = start_row
+
+        # Título del bloque
+        ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=6)
+        c = ws.cell(row, 1, titulo)
+        c.font = _font(bold=True, color="FFFFFF", size=11)
+        c.fill = _fill(C_TBL)
+        c.alignment = _align("left")
+        ws.row_dimensions[row].height = 20
+        row += 1
+
+        if df_filtrado.empty:
+            ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=6)
+            ws.cell(row, 1, "✔ Sin transacciones pendientes de asignación.").font = _font(color="2ECC71", size=9)
+            ws.cell(row, 1).alignment = _align("left")
+            return row + 2
+
+        # Encabezados de la tabla
+        headers = ["Fecha", "Cuenta", "Tipo Doc.", "Nro. Doc.", "Tercero / Persona", "Valor ($)"]
+        widths  = [14,       36,       12,          18,          36,                   16]
+        ws.row_dimensions[row].height = 16
+        for col, (h, w) in enumerate(zip(headers, widths), 1):
+            c = ws.cell(row, col, h)
+            c.font = _font(bold=True, color="FFFFFF", size=9)
+            c.fill = _fill(C_SEC)
+            c.alignment = _align("center" if col != 2 else "left")
+            ws.column_dimensions[get_column_letter(col)].width = w
+        row += 1
+
+        alt = False
+        total = 0.0
+        for _, tr in df_filtrado.iterrows():
+            bg  = "EBF5FB" if alt else "FFFFFF"
+            alt = not alt
+            ws.row_dimensions[row].height = 13
+
+            fecha = tr.get("Fecha", "")
+            if hasattr(fecha, "strftime"):
+                fecha = fecha.strftime("%d/%m/%Y")
+
+            vals = [
+                str(fecha),
+                f"{tr.get('Codigo','').strip()} · {tr.get('Cuenta','').strip()}"[:60],
+                str(tr.get("TipoDoc", "") or ""),
+                str(tr.get("NumDoc",  "") or ""),
+                str(tr.get("Tercero", "") or ""),
+                float(tr.get("Monto", 0) or 0),
+            ]
+            for col, v in enumerate(vals, 1):
+                c = ws.cell(row, col, v)
+                c.fill = _fill(bg)
+                c.font = _font(size=9)
+                if col == 6:
+                    c.number_format = FMT_MONEY
+                    c.alignment = _align("right")
+                    total += float(v)
+                elif col == 1:
+                    c.alignment = _align("center")
+                else:
+                    c.alignment = _align("left")
+            row += 1
+
+        # Fila de total
+        ws.row_dimensions[row].height = 14
+        for col in range(1, 7):
+            ws.cell(row, col).fill = _fill("1C2833")
+        ws.cell(row, 5, f"TOTAL  ({len(df_filtrado)} transacciones)").font = _font(bold=True, color="F0F3FF", size=9)
+        ws.cell(row, 5).fill = _fill("1C2833"); ws.cell(row, 5).alignment = _align("right")
+        c_tot = ws.cell(row, 6, total)
+        c_tot.number_format = FMT_MONEY
+        c_tot.font = _font(bold=True, color="FFD700", size=9)
+        c_tot.fill = _fill("1C2833"); c_tot.alignment = _align("right")
+
+        return row + 2
+
+    # ── Encabezado de la hoja ────────────────────────────────────────────────
+    ws.row_dimensions[1].height = 22
+    ws.row_dimensions[2].height = 16
+    ws.merge_cells("A1:F1")
+    c = ws.cell(1, 1, empresa)
+    c.font = _font(bold=True, color=C_TITULO_FG, size=13)
+    c.fill = _fill(C_TITULO_BG); c.alignment = _align("center")
+
+    ws.merge_cells("A2:F2")
+    c = ws.cell(2, 1, "Transacciones Sin Asignación  ·  Proyecto y Centro de Costo")
+    c.font = _font(bold=False, color=C_TITULO_FG, size=11)
+    c.fill = _fill(C_HEADER_BG); c.alignment = _align("center")
+
+    ws.row_dimensions[3].height = 8
+    for col in range(1, 7):
+        ws.cell(3, col).fill = _fill(C_HEADER_BG)
+
+    current_row = 4
+
+    # ── Bloque 1: Sin Proyecto ───────────────────────────────────────────────
+    sin_proy = df_mayor[
+        df_mayor["Proyecto"].astype(str).str.strip().isin(["", "nan", "None"])
+    ].copy() if not df_mayor.empty else pd.DataFrame()
+
+    current_row = _bloque(ws, "⚠️  Sin Proyecto asignado", sin_proy, current_row)
+
+    # ── Bloque 2: Sin Centro de Costo ────────────────────────────────────────
+    sin_cc = df_mayor[
+        df_mayor["CentroCosto"].astype(str).str.strip().isin(["", "nan", "None"])
+    ].copy() if not df_mayor.empty else pd.DataFrame()
+
+    current_row = _bloque(ws, "⚠️  Sin Centro de Costo asignado", sin_cc, current_row)
+
+    ws.freeze_panes = "A4"
+
+
 def _write_observaciones_sheet(ws, observaciones, empresa):
     """Escribe la pestaña de observaciones."""
     ws.row_dimensions[1].height = 22
@@ -489,6 +610,7 @@ def exportar_excel(
     filas_cc, value_cols_cc,
     observaciones,
     df_balance=None,
+    df_mayor_completo=None,
     titulo_mes="Estado de Resultados Comparativo Mensual",
     titulo_proyecto="Estado de Resultados por Proyecto (MOD y CIF prorrateados por ingresos)",
     titulo_cc="Estado de Resultados por Centro de Costo",
@@ -518,7 +640,12 @@ def exportar_excel(
         ws_bg = wb.create_sheet("Situación Financiera")
         _write_balance_sheet(ws_bg, empresa, titulo_balance, df_balance)
 
-    # ── Pestaña 5: Observaciones ─────────────────────────────────────────────
+    # ── Pestaña 5: Transacciones Sin Asignación ───────────────────────────────
+    if df_mayor_completo is not None and not df_mayor_completo.empty:
+        ws_sa = wb.create_sheet("Sin Asignación")
+        _write_sin_asignacion_sheet(ws_sa, df_mayor_completo, empresa)
+
+    # ── Pestaña 6: Observaciones ─────────────────────────────────────────────
     ws_obs = wb.create_sheet("Observaciones")
     _write_observaciones_sheet(ws_obs, observaciones, empresa)
 

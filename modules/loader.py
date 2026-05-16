@@ -146,10 +146,13 @@ def load_mayor(file_input):
         raw_fecha  = row.iloc[0]
         raw_codigo = row.iloc[1]
         raw_cuenta = row.iloc[2]
-        raw_cc     = row.iloc[3] if len(row) > 3 else None
-        raw_proy   = row.iloc[4] if len(row) > 4 else None
-        raw_debe   = row.iloc[11] if len(row) > 11 else None
-        raw_haber  = row.iloc[12] if len(row) > 12 else None
+        raw_cc       = row.iloc[3]  if len(row) > 3  else None
+        raw_proy     = row.iloc[4]  if len(row) > 4  else None
+        raw_tipo_doc = row.iloc[5]  if len(row) > 5  else None
+        raw_num_doc  = row.iloc[6]  if len(row) > 6  else None
+        raw_tercero  = row.iloc[9]  if len(row) > 9  else None
+        raw_debe     = row.iloc[11] if len(row) > 11 else None
+        raw_haber    = row.iloc[12] if len(row) > 12 else None
 
         codigo = str(raw_codigo).strip() if pd.notna(raw_codigo) else ""
         cuenta = str(raw_cuenta).strip() if pd.notna(raw_cuenta) else ""
@@ -174,10 +177,16 @@ def load_mayor(file_input):
             debe  = 0.0 if pd.isna(_d) else float(_d)
             haber = 0.0 if pd.isna(_h) else float(_h)
 
-            cc    = str(raw_cc).strip()   if pd.notna(raw_cc)   else ""
-            proy  = str(raw_proy).strip() if pd.notna(raw_proy) else ""
-            cc    = "" if cc   in ("nan", "Centro de Costo") else cc
-            proy  = "" if proy in ("nan", "Proyecto")        else proy
+            cc       = str(raw_cc).strip()       if pd.notna(raw_cc)       else ""
+            proy     = str(raw_proy).strip()     if pd.notna(raw_proy)     else ""
+            tipo_doc = str(raw_tipo_doc).strip() if pd.notna(raw_tipo_doc) else ""
+            num_doc  = str(raw_num_doc).strip()  if pd.notna(raw_num_doc)  else ""
+            tercero  = str(raw_tercero).strip()  if pd.notna(raw_tercero)  else ""
+            cc       = "" if cc       in ("nan", "Centro de Costo") else cc
+            proy     = "" if proy     in ("nan", "Proyecto")        else proy
+            tipo_doc = "" if tipo_doc in ("nan", "Tipo")            else tipo_doc
+            num_doc  = "" if num_doc  in ("nan", "Número")          else num_doc
+            tercero  = "" if tercero  in ("nan", "Tercero", "Nombre") else tercero
 
             # Monto según naturaleza de la cuenta
             if current_codigo.startswith("4"):
@@ -191,6 +200,9 @@ def load_mayor(file_input):
                 "Cuenta":      current_cuenta,
                 "CentroCosto": cc,
                 "Proyecto":    proy,
+                "TipoDoc":     tipo_doc,
+                "NumDoc":      num_doc,
+                "Tercero":     tercero,
                 "Debe":        debe,
                 "Haber":       haber,
                 "Monto":       monto,
