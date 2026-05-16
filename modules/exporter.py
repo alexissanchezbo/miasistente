@@ -3,6 +3,7 @@ Genera el archivo Excel de salida con 4 pestañas y formato profesional.
 """
 
 import io
+import pandas as pd
 from openpyxl import Workbook
 from openpyxl.styles import (
     Font, PatternFill, Alignment, Border, Side, numbers
@@ -259,6 +260,174 @@ def _write_pyg_sheet(ws, empresa, titulo, filas, value_cols, show_pct=True, pct_
     ws.freeze_panes = ws.cell(data_start_row, 3)
 
 
+def _write_balance_sheet(ws, empresa, titulo, df_bg):
+    """
+    Escribe el Estado de Situación Financiera (Balance General).
+    df_bg: DataFrame con columnas Cod, Concepto, Total
+    Estructura: cuentas 1=Activos, 2=Pasivos, 3=Patrimonio
+    """
+    # Colores por grupo raíz
+    COLORES = {
+        "1": ("0B3D91", "FFFFFF"),   # Activos → azul oscuro
+        "2": ("6B1A1A", "FFFFFF"),   # Pasivos → burdeos
+        "3": ("145A32", "FFFFFF"),   # Patrimonio → verde oscuro
+    }
+    C_SUB   = ("1C2833", "F0F3FF")  # Subtotales
+    C_D_BG  = "FFFFFF"
+    C_D_ALT = "F2F3F4"
+    C_D_FG  = "1A1A2E"
+
+    # ── Encabezados ──────────────────────────────────────────────────────────
+    ws.row_dimensions[1].height = 22
+    ws.row_dimensions[2].height = 18
+    ws.row_dimensions[3].height = 14
+
+    for r in (1, 2, 3):
+        ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=3)
+    c = ws.cell(1, 1, empresa)
+    c.font = _font(bold=True, color=C_TITULO_FG, size=13)
+    c.fill = _fill(C_TITULO_BG); c.alignment = _align("center")
+
+    c = ws.cell(2, 1, titulo)
+    c.font = _font(bold=False, color=C_TITULO_FG, size=11)
+    c.fill = _fill(C_HEADER_BG); c.alignment = _align("center")
+
+    for col in range(1, 4):
+        ws.cell(3, col).fill = _fill(C_HEADER_BG)
+
+    ws.row_dimensions[4].height = 24
+    for col, (lbl, w, al) in enumerate([
+        ("Cód.", 12, "center"), ("Concepto", 52, "left"), ("Saldo", 18, "right")
+    ], 1):
+        c = ws.cell(4, col, lbl)
+        c.font = _font(bold=True, color=C_HEADER_FG, size=10)
+        c.fill = _fill(C_HEADER_BG)
+        c.alignment = _align(al)
+        ws.column_dimensions[get_column_letter(col)].width = w
+
+    data_start = 5
+
+    # ── Detectar cuentas madre ───────────────────────────────────────────────
+    all_cods = set(df_bg["Cod"].astype(str).str.strip())
+    parent_cods = {
+        cod for cod in all_cods
+        if any(c.startswith(cod + ".") for c in all_cods if c != cod)
+    }
+
+    # ── Acumuladores para subtotales ─────────────────────────────────────────
+    totales = {"1": 0.0, "2": 0.0, "3": 0.0}
+
+    alt = False
+    grupo_actual = None
+
+    for _, rec in df_bg.iterrows():
+        cod      = str(rec["Cod"]).strip()
+        concepto = str(rec["Concepto"]).strip()
+        valor    = float(rec["Total"]) if pd.notna(rec["Total"]) else 0.0
+        nivel    = cod.count(".")
+        raiz     = cod[0] if cod else ""
+
+        if raiz not in ("1", "2", "3"):
+            continue
+
+        # Separador de sección al cambiar de raíz
+        if raiz != grupo_actual:
+            if grupo_actual is not None:
+                # Línea subtotal del grupo anterior
+                lbl_sub = {"1": "TOTAL ACTIVOS", "2": "TOTAL PASIVOS", "3": "TOTAL PATRIMONIO"}.get(grupo_actual, "TOTAL")
+                row_s = ws.max_row + 1
+                ws.row_dimensions[row_s].height = 16
+                bg_s, fg_s = C_SUB
+                for col in range(1, 4):
+                    ws.cell(row_s, col).fill = _fill(bg_s)
+                ws.cell(row_s, 2, lbl_sub).font = _font(bold=True, color=fg_s, size=10)
+                ws.cell(row_s, 2).fill = _fill(bg_s)
+                ws.cell(row_s, 2).alignment = _align("left")
+                c_tot = ws.cell(row_s, 3, totales[grupo_actual])
+                c_tot.number_format = FMT_MONEY
+                c_tot.font = _font(bold=True, color=fg_s, size=10)
+                c_tot.fill = _fill(bg_s)
+                c_tot.alignment = _align("right")
+
+            grupo_actual = raiz
+
+        # Acumular solo hojas
+        if cod not in parent_cods:
+            totales[raiz] = totales.get(raiz, 0.0) + valor
+
+        # ── Estilo por nivel ─────────────────────────────────────────────────
+        if nivel == 0:
+            bg_r, fg_r = COLORES.get(raiz, ("333333", "FFFFFF"))
+            bg, fg, bold, size = bg_r, fg_r, True, 11
+        elif nivel == 1:
+            bg_r, fg_r = COLORES.get(raiz, ("333333", "FFFFFF"))
+            # Versión más clara del color raíz
+            bg = {"1": "154360", "2": "922B21", "3": "1E8449"}.get(raiz, "333333")
+            fg, bold, size = "FFFFFF", True, 10
+        elif nivel == 2:
+            bg = {"1": "1A5276", "2": "A93226", "3": "27AE60"}.get(raiz, "444444")
+            fg, bold, size = "EAFAF1" if raiz == "3" else "DDEEFF" if raiz == "1" else "FDEDEC", True, 9
+        else:
+            bg   = C_D_ALT if alt else C_D_BG
+            fg   = C_D_FG
+            bold = cod in parent_cods
+            size = 9
+            alt  = not alt
+
+        row = ws.max_row + 1
+        ws.row_dimensions[row].height = 14 if nivel >= 2 else 16
+
+        indent = "  " * max(0, nivel - 1) if nivel >= 2 else ""
+
+        c_cod = ws.cell(row, 1, cod if nivel >= 2 else "")
+        c_cod.font = _font(bold=bold, color=fg, size=size - 1)
+        c_cod.fill = _fill(bg); c_cod.alignment = _align("left")
+
+        c_con = ws.cell(row, 2, indent + concepto)
+        c_con.font = _font(bold=bold, color=fg, size=size)
+        c_con.fill = _fill(bg); c_con.alignment = _align("left", wrap=True)
+
+        c_val = ws.cell(row, 3, valor)
+        c_val.number_format = FMT_MONEY
+        val_color = "FFAAAA" if valor < 0 else fg
+        c_val.font = _font(bold=bold, color=val_color, size=size)
+        c_val.fill = _fill(bg); c_val.alignment = _align("right")
+
+    # Subtotal del último grupo
+    if grupo_actual:
+        lbl_sub = {"1": "TOTAL ACTIVOS", "2": "TOTAL PASIVOS", "3": "TOTAL PATRIMONIO"}.get(grupo_actual, "TOTAL")
+        row_s = ws.max_row + 1
+        ws.row_dimensions[row_s].height = 16
+        bg_s, fg_s = C_SUB
+        for col in range(1, 4):
+            ws.cell(row_s, col).fill = _fill(bg_s)
+        ws.cell(row_s, 2, lbl_sub).font = _font(bold=True, color=fg_s, size=10)
+        ws.cell(row_s, 2).fill = _fill(bg_s)
+        ws.cell(row_s, 2).alignment = _align("left")
+        c_tot = ws.cell(row_s, 3, totales.get(grupo_actual, 0.0))
+        c_tot.number_format = FMT_MONEY
+        c_tot.font = _font(bold=True, color=fg_s, size=10)
+        c_tot.fill = _fill(bg_s)
+        c_tot.alignment = _align("right")
+
+    # ── Línea final: TOTAL PASIVO + PATRIMONIO ───────────────────────────────
+    total_pp = totales.get("2", 0.0) + totales.get("3", 0.0)
+    row_f = ws.max_row + 1
+    ws.row_dimensions[row_f].height = 18
+    for col in range(1, 4):
+        ws.cell(row_f, col).fill = _fill(C_TITULO_BG)
+    ws.cell(row_f, 2, "TOTAL PASIVO + PATRIMONIO").font = _font(bold=True, color="FFFFFF", size=11)
+    ws.cell(row_f, 2).fill = _fill(C_TITULO_BG)
+    ws.cell(row_f, 2).alignment = _align("left")
+    c_fp = ws.cell(row_f, 3, total_pp)
+    c_fp.number_format = FMT_MONEY
+    c_fp.font = _font(bold=True, color="FFD700", size=11)
+    c_fp.fill = _fill(C_TITULO_BG)
+    c_fp.alignment = _align("right")
+
+    ws.freeze_panes = ws.cell(data_start, 1)
+
+
 def _write_observaciones_sheet(ws, observaciones, empresa):
     """Escribe la pestaña de observaciones."""
     ws.row_dimensions[1].height = 22
@@ -319,9 +488,11 @@ def exportar_excel(
     filas_proyecto, value_cols_proyecto,
     filas_cc, value_cols_cc,
     observaciones,
+    df_balance=None,
     titulo_mes="Estado de Resultados Comparativo Mensual",
     titulo_proyecto="Estado de Resultados por Proyecto (MOD y CIF prorrateados por ingresos)",
     titulo_cc="Estado de Resultados por Centro de Costo",
+    titulo_balance="Estado de Situación Financiera",
 ):
     wb = Workbook()
 
@@ -331,7 +502,7 @@ def exportar_excel(
     _write_pyg_sheet(
         ws_mes, empresa, titulo_mes,
         filas_mes, value_cols_mes,
-        pct_mode="variation",          # ← ▲▼ variación vs mes anterior
+        pct_mode="variation",
     )
 
     # ── Pestaña 2: Por Proyecto ──────────────────────────────────────────────
@@ -342,7 +513,12 @@ def exportar_excel(
     ws_cc = wb.create_sheet("P&G por Centro de Costo")
     _write_pyg_sheet(ws_cc, empresa, titulo_cc, filas_cc, value_cols_cc)
 
-    # ── Pestaña 4: Observaciones ─────────────────────────────────────────────
+    # ── Pestaña 4: Estado de Situación Financiera (Balance) ──────────────────
+    if df_balance is not None and not df_balance.empty:
+        ws_bg = wb.create_sheet("Situación Financiera")
+        _write_balance_sheet(ws_bg, empresa, titulo_balance, df_balance)
+
+    # ── Pestaña 5: Observaciones ─────────────────────────────────────────────
     ws_obs = wb.create_sheet("Observaciones")
     _write_observaciones_sheet(ws_obs, observaciones, empresa)
 

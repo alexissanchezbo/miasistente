@@ -163,12 +163,14 @@ if generar and todos_listos:
             filas_cc            = filas_cc,
             value_cols_cc       = vcols_cc,
             observaciones       = obs,
+            df_balance          = df_bg,
             titulo_mes          = f"Estado de Resultados Comparativo Mensual  |  {periodo_desc}",
             titulo_proyecto     = (
                 f"Estado de Resultados por Proyecto  |  {periodo_desc}  "
                 f"({fecha_ini.strftime('%d/%m/%Y')} – {fecha_fin.strftime('%d/%m/%Y')})"
             ),
             titulo_cc           = f"Estado de Resultados por Centro de Costo  |  {periodo_desc}",
+            titulo_balance      = f"Estado de Situación Financiera  |  {periodo_desc}",
         )
 
         prog.progress(100, "✅ Listo")
