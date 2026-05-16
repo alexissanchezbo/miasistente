@@ -168,6 +168,7 @@ if generar and todos_listos:
             observaciones       = obs,
             df_balance          = df_bg,
             df_mayor_completo   = df_mayor_all,
+            periodo_desc        = periodo_desc,
             titulo_mes          = f"Estado de Resultados Comparativo Mensual  |  {periodo_desc}",
             titulo_proyecto     = (
                 f"Estado de Resultados por Proyecto  |  {periodo_desc}  "

@@ -549,6 +549,457 @@ def _write_sin_asignacion_sheet(ws, df_mayor, empresa):
     ws.freeze_panes = "A4"
 
 
+def _write_dashboard_sheet(
+    ws, empresa, periodo_desc,
+    filas_mes, value_cols_mes,
+    filas_proyecto, value_cols_proyecto,
+    filas_cc, value_cols_cc,
+    df_balance=None,
+):
+    """Dashboard ejecutivo — primera pestaña del Excel."""
+
+    # ── Helpers ──────────────────────────────────────────────────────────────
+    def _sub(filas, label, col="TOTAL"):
+        lab_up = label.upper()
+        for f in filas:
+            if f.get("tipo") == "subtotal" and lab_up in f.get("concepto", "").upper():
+                return float(f.get("values", {}).get(col, 0) or 0)
+        return 0.0
+
+    def _sumcod(filas, prefix, col="TOTAL"):
+        total = 0.0
+        for f in filas:
+            if f.get("tipo") == "data" and str(f.get("cod", "")).startswith(prefix):
+                total += float(f.get("values", {}).get(col, 0) or 0)
+        return total
+
+    def _pct(val, base):
+        return (val / abs(base)) if abs(base or 0) > 0.001 else 0.0
+
+    # ── Colores locales ───────────────────────────────────────────────────────
+    C_SEC_HDR = "1C2833"
+    C_TBL_HDR = "16213E"
+    C_TOT_ROW = "0F3460"
+    C_ALT_LOC = "EBF5FB"
+
+    NCOLS = 11
+
+    # ── Anchos de columna ────────────────────────────────────────────────────
+    for col_l, w in [("A",1),("B",38),("C",16),("D",16),("E",16),("F",9),
+                     ("G",16),("H",16),("I",9),("J",16),("K",9)]:
+        ws.column_dimensions[col_l].width = w
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # TÍTULO
+    # ══════════════════════════════════════════════════════════════════════════
+    ws.row_dimensions[1].height = 24
+    ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=NCOLS)
+    c = ws.cell(1, 1, empresa)
+    c.font = _font(bold=True, color=C_TITULO_FG, size=14)
+    c.fill = _fill(C_TITULO_BG); c.alignment = _align("center")
+
+    ws.row_dimensions[2].height = 18
+    ws.merge_cells(start_row=2, start_column=1, end_row=2, end_column=NCOLS)
+    c = ws.cell(2, 1, f"Dashboard Ejecutivo   ·   {periodo_desc}")
+    c.font = _font(bold=False, color=C_TITULO_FG, size=11)
+    c.fill = _fill(C_HEADER_BG); c.alignment = _align("center")
+
+    ws.row_dimensions[3].height = 6
+    for col in range(1, NCOLS + 1):
+        ws.cell(3, col).fill = _fill(C_HEADER_BG)
+
+    row = 4
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # SECCIÓN 1 — ESTADO DE RESULTADOS CONSOLIDADO
+    # ══════════════════════════════════════════════════════════════════════════
+    vcol = "TOTAL"
+    ingr    = _sumcod(filas_proyecto, "4",       vcol)
+    cv_mat  = _sumcod(filas_proyecto, "5.1.1",   vcol)
+    cv_mod  = _sumcod(filas_proyecto, "5.1.2",   vcol)
+    cv_moi  = _sumcod(filas_proyecto, "5.1.3",   vcol)
+    cv_cif  = _sumcod(filas_proyecto, "5.1.4",   vcol)
+    gv      = _sumcod(filas_proyecto, "5.2.1.1", vcol)
+    ga      = _sumcod(filas_proyecto, "5.2.1.2", vcol)
+    gf      = _sumcod(filas_proyecto, "5.2.1.3", vcol)
+    g_nop   = (_sumcod(filas_proyecto, "5.2.2",  vcol) +
+               _sumcod(filas_proyecto, "5.2.3",  vcol))
+    impues  = _sumcod(filas_proyecto, "5.2.4",   vcol)
+    ut_bruta = _sub(filas_proyecto, "UTILIDAD BRUTA",              vcol)
+    ut_bi    = _sub(filas_proyecto, "UTILIDAD BRUTA INDUSTRIAL",   vcol)
+    ut_op    = _sub(filas_proyecto, "UTILIDAD OPERACIONAL",        vcol)
+    ut_ai    = _sub(filas_proyecto, "ANTES DE IMPUESTOS",          vcol)
+    ut_neta  = _sub(filas_proyecto, "UTILIDAD NETA",               vcol)
+    gastos_op = gv + ga
+
+    # ── Encabezado sección ────────────────────────────────────────────────────
+    ws.row_dimensions[row].height = 16
+    ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=NCOLS)
+    c = ws.cell(row, 1, "  ESTADO DE RESULTADOS CONSOLIDADO")
+    c.font = _font(bold=True, color="FFFFFF", size=10)
+    c.fill = _fill(C_SEC_HDR); c.alignment = _align("left")
+    row += 1
+
+    # ── Cabecera de tabla ────────────────────────────────────────────────────
+    ws.row_dimensions[row].height = 14
+    for col in range(1, NCOLS + 1):
+        ws.cell(row, col).fill = _fill(C_TBL_HDR)
+    for col_n, hdr, al in [(2,"Concepto","left"),(3,"Valor ($)","right"),(4,"% Ingresos","right")]:
+        c = ws.cell(row, col_n, hdr)
+        c.font = _font(bold=True, color="FFFFFF", size=9)
+        c.fill = _fill(C_TBL_HDR); c.alignment = _align(al)
+    row += 1
+
+    # ── Función auxiliar para fila de dato ───────────────────────────────────
+    def _drow(label, val, base, bold=False, bg="FFFFFF", dark_bg=False, indent=0):
+        nonlocal row
+        ws.row_dimensions[row].height = 14
+        for col in range(1, NCOLS + 1):
+            ws.cell(row, col).fill = _fill(bg)
+        fg_txt = "FFFFFF" if dark_bg else "1A1A2E"
+        fg_val = "FFFFFF" if dark_bg else ("C0392B" if val < 0 else ("1A5276" if bold else "1A1A2E"))
+        fg_pct = "DDDDDD" if dark_bg else "777777"
+        c = ws.cell(row, 2, ("  " * indent) + label)
+        c.font = _font(bold=bold, color=fg_txt, size=9)
+        c.fill = _fill(bg); c.alignment = _align("left")
+        c_v = ws.cell(row, 3, val)
+        c_v.number_format = FMT_MONEY
+        c_v.font = _font(bold=bold, color=fg_val, size=9)
+        c_v.fill = _fill(bg); c_v.alignment = _align("right")
+        c_p = ws.cell(row, 4, _pct(val, base))
+        c_p.number_format = FMT_PCT
+        c_p.font = _font(bold=bold, color=fg_pct, size=9, italic=not bold)
+        c_p.fill = _fill(bg); c_p.alignment = _align("right")
+        row += 1
+
+    def _srow(label, val, base, bg=None, fg="F0F3FF"):
+        nonlocal row
+        bg = bg or C_SUBTOT_BG
+        ws.row_dimensions[row].height = 15
+        for col in range(1, NCOLS + 1):
+            ws.cell(row, col).fill = _fill(bg)
+        c = ws.cell(row, 2, label)
+        c.font = _font(bold=True, color=fg, size=10)
+        c.fill = _fill(bg); c.alignment = _align("left")
+        c_v = ws.cell(row, 3, val)
+        c_v.number_format = FMT_MONEY
+        c_v.font = _font(bold=True, color="FFD700" if val >= 0 else "FF9090", size=10)
+        c_v.fill = _fill(bg); c_v.alignment = _align("right")
+        c_p = ws.cell(row, 4, _pct(val, base))
+        c_p.number_format = FMT_PCT
+        c_p.font = _font(bold=True, color=fg, size=9)
+        c_p.fill = _fill(bg); c_p.alignment = _align("right")
+        row += 1
+
+    alt = False
+    def _alt():
+        nonlocal alt
+        bg = C_ALT_LOC if alt else "FFFFFF"
+        alt = not alt
+        return bg
+
+    _srow("(+) Ingresos Netos",              ingr,     ingr, bg="0B3D91")
+    _drow("(-) Costo de Materias Primas",    -cv_mat,  ingr, indent=1, bg=_alt())
+    _srow("= UTILIDAD BRUTA",                ut_bruta, ingr)
+    _drow("(-) Mano de Obra Directa",        -cv_mod,  ingr, indent=1, bg=_alt())
+    _drow("(-) Mano de Obra Indirecta",      -cv_moi,  ingr, indent=1, bg=_alt())
+    _drow("(-) Costos Ind. Fabricación",     -cv_cif,  ingr, indent=1, bg=_alt())
+    _srow("= UTILIDAD BRUTA INDUSTRIAL",     ut_bi,    ingr)
+    _drow("(-) Gastos de Ventas",            -gv,      ingr, indent=1, bg=_alt())
+    _drow("(-) Gastos Administrativos",      -ga,      ingr, indent=1, bg=_alt())
+    _srow("= UTILIDAD OPERACIONAL",          ut_op,    ingr)
+    _drow("(-) Gastos Financieros",          -gf,      ingr, indent=1, bg=_alt())
+    _srow("= UTILIDAD ANTES DE IMPUESTOS",   ut_ai,    ingr)
+    _drow("(-) Impuestos",                   -impues,  ingr, indent=1, bg=_alt())
+    _srow("= UTILIDAD NETA",                 ut_neta,  ingr, bg=C_TITULO_BG, fg="FFFFFF")
+
+    row += 1  # spacer
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # SECCIÓN 2 — SITUACIÓN FINANCIERA RESUMEN
+    # ══════════════════════════════════════════════════════════════════════════
+    if df_balance is not None and not df_balance.empty:
+        tot_bg = {"1": 0.0, "2": 0.0, "3": 0.0}
+        all_cods_b = set(df_balance["Cod"].astype(str).str.strip())
+        parent_b = {
+            cod for cod in all_cods_b
+            if any(c2.startswith(cod + ".") for c2 in all_cods_b if c2 != cod)
+        }
+        for _, rec in df_balance.iterrows():
+            cod = str(rec["Cod"]).strip()
+            val = float(rec.get("Total", 0) or 0)
+            raiz = cod[0] if cod else ""
+            if raiz in tot_bg and cod not in parent_b:
+                tot_bg[raiz] += val
+
+        ws.row_dimensions[row].height = 16
+        ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=NCOLS)
+        c = ws.cell(row, 1, "  SITUACIÓN FINANCIERA — RESUMEN")
+        c.font = _font(bold=True, color="FFFFFF", size=10)
+        c.fill = _fill(C_SEC_HDR); c.alignment = _align("left")
+        row += 1
+
+        for lbl, raiz, bg_b in [
+            ("Total Activos",    "1", "0B3D91"),
+            ("Total Pasivos",    "2", "6B1A1A"),
+            ("Total Patrimonio", "3", "145A32"),
+        ]:
+            val_b = tot_bg[raiz]
+            ws.row_dimensions[row].height = 14
+            for col in range(1, NCOLS + 1):
+                ws.cell(row, col).fill = _fill(bg_b)
+            c = ws.cell(row, 2, lbl)
+            c.font = _font(bold=True, color="FFFFFF", size=10)
+            c.fill = _fill(bg_b); c.alignment = _align("left")
+            c_v = ws.cell(row, 3, val_b)
+            c_v.number_format = FMT_MONEY
+            c_v.font = _font(bold=True, color="FFD700", size=10)
+            c_v.fill = _fill(bg_b); c_v.alignment = _align("right")
+            pct_b = _pct(val_b, tot_bg["1"])
+            c_p = ws.cell(row, 4, pct_b)
+            c_p.number_format = FMT_PCT
+            c_p.font = _font(bold=False, color="CCCCCC", size=9, italic=True)
+            c_p.fill = _fill(bg_b); c_p.alignment = _align("right")
+            row += 1
+
+        row += 1  # spacer
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # SECCIÓN 3 — EVOLUCIÓN MENSUAL
+    # ══════════════════════════════════════════════════════════════════════════
+    if filas_mes and value_cols_mes:
+        ws.row_dimensions[row].height = 16
+        ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=NCOLS)
+        c = ws.cell(row, 1, "  EVOLUCIÓN MENSUAL")
+        c.font = _font(bold=True, color="FFFFFF", size=10)
+        c.fill = _fill(C_SEC_HDR); c.alignment = _align("left")
+        row += 1
+
+        # Cabecera tabla mensual (usa cols B a I)
+        ws.row_dimensions[row].height = 14
+        for col in range(1, NCOLS + 1):
+            ws.cell(row, col).fill = _fill(C_TBL_HDR)
+        for col_n, hdr, al in [
+            (2,"Período","left"),(3,"Ingresos","right"),(4,"Ut. Bruta","right"),
+            (5,"% MB","right"),(6,"Ut. Operacional","right"),(7,"% Op.","right"),
+            (8,"Ut. Neta","right"),(9,"% Neta","right"),
+        ]:
+            c = ws.cell(row, col_n, hdr)
+            c.font = _font(bold=True, color="FFFFFF", size=9)
+            c.fill = _fill(C_TBL_HDR); c.alignment = _align(al)
+        row += 1
+
+        alt_m = False
+        for vc in value_cols_mes:
+            m_ingr = _sumcod(filas_mes, "4", vc)
+            m_ub   = _sub(filas_mes, "UTILIDAD BRUTA", vc)
+            m_uop  = _sub(filas_mes, "UTILIDAD OPERACIONAL", vc)
+            m_un   = _sub(filas_mes, "UTILIDAD NETA", vc)
+            is_tot = str(vc).upper() in ("TOTAL", "TOTALES", "TOT")
+            bg_m   = C_TOT_ROW if is_tot else (C_ALT_LOC if alt_m else "FFFFFF")
+            alt_m  = not alt_m
+
+            ws.row_dimensions[row].height = 13
+            for col in range(1, NCOLS + 1):
+                ws.cell(row, col).fill = _fill(bg_m)
+
+            fg_m  = "FFFFFF" if is_tot else "1A1A2E"
+            c = ws.cell(row, 2, str(vc))
+            c.font = _font(bold=is_tot, color=fg_m, size=9)
+            c.fill = _fill(bg_m); c.alignment = _align("left")
+
+            for col_n, val in [(3,m_ingr),(4,m_ub),(6,m_uop),(8,m_un)]:
+                c_v = ws.cell(row, col_n, val)
+                c_v.number_format = FMT_MONEY
+                vfg = ("FFD700" if val >= 0 else "FF9090") if is_tot else ("C0392B" if val < 0 else fg_m)
+                c_v.font = _font(bold=is_tot, color=vfg, size=9)
+                c_v.fill = _fill(bg_m); c_v.alignment = _align("right")
+
+            for col_n, val, base in [(5,m_ub,m_ingr),(7,m_uop,m_ingr),(9,m_un,m_ingr)]:
+                pct_v = _pct(val, base)
+                c_p = ws.cell(row, col_n, pct_v)
+                c_p.number_format = FMT_PCT
+                pfg = ("DDDDDD" if pct_v >= 0 else "FF9090") if is_tot else ("C0392B" if pct_v < 0 else "777777")
+                c_p.font = _font(bold=is_tot, color=pfg, size=9, italic=not is_tot)
+                c_p.fill = _fill(bg_m); c_p.alignment = _align("right")
+
+            row += 1
+        row += 1  # spacer
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # SECCIÓN 4 — RESUMEN POR PROYECTO
+    # ══════════════════════════════════════════════════════════════════════════
+    proyectos = [c2 for c2 in value_cols_proyecto if c2 != "TOTAL"]
+    if proyectos:
+        ws.row_dimensions[row].height = 16
+        ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=NCOLS)
+        c = ws.cell(row, 1, f"  RESUMEN POR PROYECTO  ({len(proyectos)} proyectos detectados)")
+        c.font = _font(bold=True, color="FFFFFF", size=10)
+        c.fill = _fill(C_SEC_HDR); c.alignment = _align("left")
+        row += 1
+
+        ws.row_dimensions[row].height = 14
+        for col in range(1, NCOLS + 1):
+            ws.cell(row, col).fill = _fill(C_TBL_HDR)
+        for col_n, hdr, al in [
+            (2,"Proyecto","left"),(3,"Ingresos Netos","right"),(4,"Costo Ventas","right"),
+            (5,"Ut. Bruta","right"),(6,"% MB","right"),(7,"Gastos Op.","right"),
+            (8,"Ut. Operacional","right"),(9,"% Op.","right"),(10,"Ut. Neta","right"),(11,"% Neta","right"),
+        ]:
+            c = ws.cell(row, col_n, hdr)
+            c.font = _font(bold=True, color="FFFFFF", size=9)
+            c.fill = _fill(C_TBL_HDR); c.alignment = _align(al)
+        ws.cell(row, 1).fill = _fill(C_TBL_HDR)
+        row += 1
+
+        # Recopilar y ordenar por ingresos desc
+        proj_data = []
+        for proy in proyectos:
+            p_ingr = _sumcod(filas_proyecto, "4",       proy)
+            p_cmat = _sumcod(filas_proyecto, "5.1.1",   proy)
+            p_ub   = _sub(filas_proyecto,   "UTILIDAD BRUTA",        proy)
+            p_gop  = (_sumcod(filas_proyecto, "5.2.1.1", proy) +
+                      _sumcod(filas_proyecto, "5.2.1.2", proy))
+            p_uop  = _sub(filas_proyecto,   "UTILIDAD OPERACIONAL",  proy)
+            p_un   = _sub(filas_proyecto,   "UTILIDAD NETA",         proy)
+            proj_data.append((proy, p_ingr, p_cmat, p_ub, p_gop, p_uop, p_un))
+        proj_data.sort(key=lambda x: x[1], reverse=True)
+
+        alt_p = False
+        for proy, p_ingr, p_cmat, p_ub, p_gop, p_uop, p_un in proj_data:
+            bg_p = C_ALT_LOC if alt_p else "FFFFFF"
+            alt_p = not alt_p
+            ws.row_dimensions[row].height = 13
+            for col in range(1, NCOLS + 1):
+                ws.cell(row, col).fill = _fill(bg_p)
+            c = ws.cell(row, 2, proy)
+            c.font = _font(bold=False, color="1A1A2E", size=9)
+            c.fill = _fill(bg_p); c.alignment = _align("left")
+            for col_n, val in [(3,p_ingr),(4,p_cmat),(5,p_ub),(7,p_gop),(8,p_uop),(10,p_un)]:
+                c_v = ws.cell(row, col_n, val)
+                c_v.number_format = FMT_MONEY
+                c_v.font = _font(bold=False, color="C0392B" if val < 0 else "1A1A2E", size=9)
+                c_v.fill = _fill(bg_p); c_v.alignment = _align("right")
+            for col_n, val, base in [(6,p_ub,p_ingr),(9,p_uop,p_ingr),(11,p_un,p_ingr)]:
+                pct_v = _pct(val, base)
+                c_p = ws.cell(row, col_n, pct_v)
+                c_p.number_format = FMT_PCT
+                c_p.font = _font(bold=False, color="C0392B" if pct_v < 0 else "555555", size=9, italic=True)
+                c_p.fill = _fill(bg_p); c_p.alignment = _align("right")
+            row += 1
+
+        # Fila TOTAL proyectos
+        ws.row_dimensions[row].height = 15
+        for col in range(1, NCOLS + 1):
+            ws.cell(row, col).fill = _fill(C_TOT_ROW)
+        c = ws.cell(row, 2, f"TOTAL  ({len(proyectos)} proyectos)")
+        c.font = _font(bold=True, color="FFFFFF", size=9)
+        c.fill = _fill(C_TOT_ROW); c.alignment = _align("left")
+        for col_n, val in [(3,ingr),(4,cv_mat),(5,ut_bruta),(7,gastos_op),(8,ut_op),(10,ut_neta)]:
+            c_v = ws.cell(row, col_n, val)
+            c_v.number_format = FMT_MONEY
+            c_v.font = _font(bold=True, color="FFD700" if val >= 0 else "FF9090", size=9)
+            c_v.fill = _fill(C_TOT_ROW); c_v.alignment = _align("right")
+        for col_n, val, base in [(6,ut_bruta,ingr),(9,ut_op,ingr),(11,ut_neta,ingr)]:
+            pct_v = _pct(val, base)
+            c_p = ws.cell(row, col_n, pct_v)
+            c_p.number_format = FMT_PCT
+            c_p.font = _font(bold=True, color="DDDDDD", size=9)
+            c_p.fill = _fill(C_TOT_ROW); c_p.alignment = _align("right")
+        row += 2  # spacer
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # SECCIÓN 5 — RESUMEN POR CENTRO DE COSTO
+    # ══════════════════════════════════════════════════════════════════════════
+    cc_list = [c2 for c2 in value_cols_cc if c2 != "TOTAL"]
+    if cc_list:
+        ws.row_dimensions[row].height = 16
+        ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=NCOLS)
+        c = ws.cell(row, 1, f"  RESUMEN POR CENTRO DE COSTO  ({len(cc_list)} centros)")
+        c.font = _font(bold=True, color="FFFFFF", size=10)
+        c.fill = _fill(C_SEC_HDR); c.alignment = _align("left")
+        row += 1
+
+        ws.row_dimensions[row].height = 14
+        for col in range(1, NCOLS + 1):
+            ws.cell(row, col).fill = _fill(C_TBL_HDR)
+        for col_n, hdr, al in [
+            (2,"Centro de Costo","left"),(3,"Ingresos Netos","right"),(4,"Costo Ventas","right"),
+            (5,"Ut. Bruta","right"),(6,"% MB","right"),(7,"Gastos Op.","right"),
+            (8,"Ut. Operacional","right"),(9,"% Op.","right"),(10,"Ut. Neta","right"),(11,"% Neta","right"),
+        ]:
+            c = ws.cell(row, col_n, hdr)
+            c.font = _font(bold=True, color="FFFFFF", size=9)
+            c.fill = _fill(C_TBL_HDR); c.alignment = _align(al)
+        ws.cell(row, 1).fill = _fill(C_TBL_HDR)
+        row += 1
+
+        cc_data = []
+        for cc in cc_list:
+            cc_ingr = _sumcod(filas_cc, "4",       cc)
+            cc_cmat = _sumcod(filas_cc, "5.1.1",   cc)
+            cc_ub   = _sub(filas_cc,   "UTILIDAD BRUTA",       cc)
+            cc_gop  = (_sumcod(filas_cc, "5.2.1.1", cc) +
+                       _sumcod(filas_cc, "5.2.1.2", cc))
+            cc_uop  = _sub(filas_cc,   "UTILIDAD OPERACIONAL", cc)
+            cc_un   = _sub(filas_cc,   "UTILIDAD NETA",        cc)
+            cc_data.append((cc, cc_ingr, cc_cmat, cc_ub, cc_gop, cc_uop, cc_un))
+        cc_data.sort(key=lambda x: x[1], reverse=True)
+
+        alt_c = False
+        for cc, cc_ingr, cc_cmat, cc_ub, cc_gop, cc_uop, cc_un in cc_data:
+            bg_c = C_ALT_LOC if alt_c else "FFFFFF"
+            alt_c = not alt_c
+            ws.row_dimensions[row].height = 13
+            for col in range(1, NCOLS + 1):
+                ws.cell(row, col).fill = _fill(bg_c)
+            c = ws.cell(row, 2, cc)
+            c.font = _font(bold=False, color="1A1A2E", size=9)
+            c.fill = _fill(bg_c); c.alignment = _align("left")
+            for col_n, val in [(3,cc_ingr),(4,cc_cmat),(5,cc_ub),(7,cc_gop),(8,cc_uop),(10,cc_un)]:
+                c_v = ws.cell(row, col_n, val)
+                c_v.number_format = FMT_MONEY
+                c_v.font = _font(bold=False, color="C0392B" if val < 0 else "1A1A2E", size=9)
+                c_v.fill = _fill(bg_c); c_v.alignment = _align("right")
+            for col_n, val, base in [(6,cc_ub,cc_ingr),(9,cc_uop,cc_ingr),(11,cc_un,cc_ingr)]:
+                pct_v = _pct(val, base)
+                c_p = ws.cell(row, col_n, pct_v)
+                c_p.number_format = FMT_PCT
+                c_p.font = _font(bold=False, color="C0392B" if pct_v < 0 else "555555", size=9, italic=True)
+                c_p.fill = _fill(bg_c); c_p.alignment = _align("right")
+            row += 1
+
+        # Totales CC
+        cc_ingr_t = _sumcod(filas_cc, "4",       "TOTAL")
+        cc_cmat_t = _sumcod(filas_cc, "5.1.1",   "TOTAL")
+        cc_ub_t   = _sub(filas_cc,   "UTILIDAD BRUTA",       "TOTAL")
+        cc_gop_t  = (_sumcod(filas_cc, "5.2.1.1", "TOTAL") +
+                     _sumcod(filas_cc, "5.2.1.2", "TOTAL"))
+        cc_uop_t  = _sub(filas_cc,   "UTILIDAD OPERACIONAL", "TOTAL")
+        cc_un_t   = _sub(filas_cc,   "UTILIDAD NETA",        "TOTAL")
+
+        ws.row_dimensions[row].height = 15
+        for col in range(1, NCOLS + 1):
+            ws.cell(row, col).fill = _fill(C_TOT_ROW)
+        c = ws.cell(row, 2, f"TOTAL  ({len(cc_list)} centros de costo)")
+        c.font = _font(bold=True, color="FFFFFF", size=9)
+        c.fill = _fill(C_TOT_ROW); c.alignment = _align("left")
+        for col_n, val in [(3,cc_ingr_t),(4,cc_cmat_t),(5,cc_ub_t),
+                           (7,cc_gop_t),(8,cc_uop_t),(10,cc_un_t)]:
+            c_v = ws.cell(row, col_n, val)
+            c_v.number_format = FMT_MONEY
+            c_v.font = _font(bold=True, color="FFD700" if val >= 0 else "FF9090", size=9)
+            c_v.fill = _fill(C_TOT_ROW); c_v.alignment = _align("right")
+        for col_n, val, base in [(6,cc_ub_t,cc_ingr_t),(9,cc_uop_t,cc_ingr_t),(11,cc_un_t,cc_ingr_t)]:
+            pct_v = _pct(val, base)
+            c_p = ws.cell(row, col_n, pct_v)
+            c_p.number_format = FMT_PCT
+            c_p.font = _font(bold=True, color="DDDDDD", size=9)
+            c_p.fill = _fill(C_TOT_ROW); c_p.alignment = _align("right")
+
+    ws.freeze_panes = "B4"
+
+
 def _write_observaciones_sheet(ws, observaciones, empresa):
     """Escribe la pestaña de observaciones."""
     ws.row_dimensions[1].height = 22
@@ -611,6 +1062,7 @@ def exportar_excel(
     observaciones,
     df_balance=None,
     df_mayor_completo=None,
+    periodo_desc="",
     titulo_mes="Estado de Resultados Comparativo Mensual",
     titulo_proyecto="Estado de Resultados por Proyecto (MOD y CIF prorrateados por ingresos)",
     titulo_cc="Estado de Resultados por Centro de Costo",
@@ -618,34 +1070,44 @@ def exportar_excel(
 ):
     wb = Workbook()
 
-    # ── Pestaña 1: Por Mes — variación % vs período anterior ────────────────
-    ws_mes = wb.active
-    ws_mes.title = "P&G por Mes"
+    # ── Pestaña 1: Dashboard ejecutivo ───────────────────────────────────────
+    ws_dash = wb.active
+    ws_dash.title = "Dashboard"
+    _write_dashboard_sheet(
+        ws_dash, empresa, periodo_desc,
+        filas_mes, value_cols_mes,
+        filas_proyecto, value_cols_proyecto,
+        filas_cc, value_cols_cc,
+        df_balance=df_balance,
+    )
+
+    # ── Pestaña 2: Por Mes — variación % vs período anterior ─────────────────
+    ws_mes = wb.create_sheet("P&G por Mes")
     _write_pyg_sheet(
         ws_mes, empresa, titulo_mes,
         filas_mes, value_cols_mes,
         pct_mode="variation",
     )
 
-    # ── Pestaña 2: Por Proyecto ──────────────────────────────────────────────
+    # ── Pestaña 3: Por Proyecto ──────────────────────────────────────────────
     ws_proy = wb.create_sheet("P&G por Proyecto")
     _write_pyg_sheet(ws_proy, empresa, titulo_proyecto, filas_proyecto, value_cols_proyecto)
 
-    # ── Pestaña 3: Por Centro de Costo ───────────────────────────────────────
+    # ── Pestaña 4: Por Centro de Costo ───────────────────────────────────────
     ws_cc = wb.create_sheet("P&G por Centro de Costo")
     _write_pyg_sheet(ws_cc, empresa, titulo_cc, filas_cc, value_cols_cc)
 
-    # ── Pestaña 4: Estado de Situación Financiera (Balance) ──────────────────
+    # ── Pestaña 5: Estado de Situación Financiera (Balance) ──────────────────
     if df_balance is not None and not df_balance.empty:
         ws_bg = wb.create_sheet("Situación Financiera")
         _write_balance_sheet(ws_bg, empresa, titulo_balance, df_balance)
 
-    # ── Pestaña 5: Transacciones Sin Asignación ───────────────────────────────
+    # ── Pestaña 6: Transacciones Sin Asignación ───────────────────────────────
     if df_mayor_completo is not None and not df_mayor_completo.empty:
         ws_sa = wb.create_sheet("Sin Asignación")
         _write_sin_asignacion_sheet(ws_sa, df_mayor_completo, empresa)
 
-    # ── Pestaña 6: Observaciones ─────────────────────────────────────────────
+    # ── Pestaña 7: Observaciones ─────────────────────────────────────────────
     ws_obs = wb.create_sheet("Observaciones")
     _write_observaciones_sheet(ws_obs, observaciones, empresa)
 
