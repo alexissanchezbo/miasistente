@@ -585,8 +585,8 @@ def _write_dashboard_sheet(
     NCOLS = 11
 
     # ── Anchos de columna ────────────────────────────────────────────────────
-    for col_l, w in [("A",1),("B",38),("C",16),("D",16),("E",16),("F",9),
-                     ("G",16),("H",16),("I",9),("J",16),("K",9)]:
+    for col_l, w in [("A",1),("B",42),("C",18),("D",18),("E",18),("F",10),
+                     ("G",18),("H",18),("I",10),("J",18),("K",10)]:
         ws.column_dimensions[col_l].width = w
 
     # ══════════════════════════════════════════════════════════════════════════
@@ -633,62 +633,66 @@ def _write_dashboard_sheet(
     gastos_op = gv + ga
 
     # ── Encabezado sección ────────────────────────────────────────────────────
-    ws.row_dimensions[row].height = 16
+    ws.row_dimensions[row].height = 20
     ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=NCOLS)
-    c = ws.cell(row, 1, "  ESTADO DE RESULTADOS CONSOLIDADO")
-    c.font = _font(bold=True, color="FFFFFF", size=10)
-    c.fill = _fill(C_SEC_HDR); c.alignment = _align("left")
+    c = ws.cell(row, 1, "    ESTADO DE RESULTADOS CONSOLIDADO")
+    c.font = _font(bold=True, color="FFFFFF", size=11)
+    c.fill = _fill(C_SEC_HDR); c.alignment = _align("left", vertical="center")
     row += 1
 
-    # ── Cabecera de tabla ────────────────────────────────────────────────────
-    ws.row_dimensions[row].height = 14
+    # ── Cabecera de tabla (solo cubre cols A-D, resto fondo neutro) ──────────
+    ws.row_dimensions[row].height = 16
     for col in range(1, NCOLS + 1):
         ws.cell(row, col).fill = _fill(C_TBL_HDR)
-    for col_n, hdr, al in [(2,"Concepto","left"),(3,"Valor ($)","right"),(4,"% Ingresos","right")]:
+    for col_n, hdr, al in [
+        (2, "Concepto",    "left"),
+        (3, "Valor ($)",   "right"),
+        (4, "% Ingresos",  "right"),
+    ]:
         c = ws.cell(row, col_n, hdr)
-        c.font = _font(bold=True, color="FFFFFF", size=9)
+        c.font = _font(bold=True, color="FFFFFF", size=10)
         c.fill = _fill(C_TBL_HDR); c.alignment = _align(al)
     row += 1
 
     # ── Función auxiliar para fila de dato ───────────────────────────────────
     def _drow(label, val, base, bold=False, bg="FFFFFF", dark_bg=False, indent=0):
         nonlocal row
-        ws.row_dimensions[row].height = 14
-        for col in range(1, NCOLS + 1):
-            ws.cell(row, col).fill = _fill(bg)
-        fg_txt = "FFFFFF" if dark_bg else "1A1A2E"
-        fg_val = "FFFFFF" if dark_bg else ("C0392B" if val < 0 else ("1A5276" if bold else "1A1A2E"))
-        fg_pct = "DDDDDD" if dark_bg else "777777"
-        c = ws.cell(row, 2, ("  " * indent) + label)
-        c.font = _font(bold=bold, color=fg_txt, size=9)
-        c.fill = _fill(bg); c.alignment = _align("left")
-        c_v = ws.cell(row, 3, val)
-        c_v.number_format = FMT_MONEY
-        c_v.font = _font(bold=bold, color=fg_val, size=9)
-        c_v.fill = _fill(bg); c_v.alignment = _align("right")
-        c_p = ws.cell(row, 4, _pct(val, base))
-        c_p.number_format = FMT_PCT
-        c_p.font = _font(bold=bold, color=fg_pct, size=9, italic=not bold)
-        c_p.fill = _fill(bg); c_p.alignment = _align("right")
-        row += 1
-
-    def _srow(label, val, base, bg=None, fg="F0F3FF"):
-        nonlocal row
-        bg = bg or C_SUBTOT_BG
         ws.row_dimensions[row].height = 15
         for col in range(1, NCOLS + 1):
             ws.cell(row, col).fill = _fill(bg)
-        c = ws.cell(row, 2, label)
-        c.font = _font(bold=True, color=fg, size=10)
+        fg_txt = "FFFFFF" if dark_bg else "222222"
+        fg_val = "FFFFFF" if dark_bg else ("C0392B" if val < 0 else "1A5276")
+        fg_pct = "CCCCCC" if dark_bg else ("C0392B" if val < 0 else "888888")
+        c = ws.cell(row, 2, ("    " * indent) + label)
+        c.font = _font(bold=bold, color=fg_txt, size=10)
         c.fill = _fill(bg); c.alignment = _align("left")
         c_v = ws.cell(row, 3, val)
         c_v.number_format = FMT_MONEY
-        c_v.font = _font(bold=True, color="FFD700" if val >= 0 else "FF9090", size=10)
+        c_v.font = _font(bold=bold, color=fg_val, size=10)
         c_v.fill = _fill(bg); c_v.alignment = _align("right")
         c_p = ws.cell(row, 4, _pct(val, base))
         c_p.number_format = FMT_PCT
-        c_p.font = _font(bold=True, color=fg, size=9)
+        c_p.font = _font(bold=False, color=fg_pct, size=9, italic=True)
         c_p.fill = _fill(bg); c_p.alignment = _align("right")
+        row += 1
+
+    def _srow(label, val, base, bg=None, fg="FFFFFF"):
+        nonlocal row
+        bg = bg or C_SUBTOT_BG
+        ws.row_dimensions[row].height = 18
+        for col in range(1, NCOLS + 1):
+            ws.cell(row, col).fill = _fill(bg)
+        c = ws.cell(row, 2, label)
+        c.font = _font(bold=True, color=fg, size=11)
+        c.fill = _fill(bg); c.alignment = _align("left", vertical="center")
+        c_v = ws.cell(row, 3, val)
+        c_v.number_format = FMT_MONEY
+        c_v.font = _font(bold=True, color="FFD700" if val >= 0 else "FF8080", size=11)
+        c_v.fill = _fill(bg); c_v.alignment = _align("right", vertical="center")
+        c_p = ws.cell(row, 4, _pct(val, base))
+        c_p.number_format = FMT_PCT
+        c_p.font = _font(bold=True, color="DDDDDD", size=10)
+        c_p.fill = _fill(bg); c_p.alignment = _align("right", vertical="center")
         row += 1
 
     alt = False
@@ -698,20 +702,20 @@ def _write_dashboard_sheet(
         alt = not alt
         return bg
 
-    _srow("(+) Ingresos Netos",              ingr,     ingr, bg="0B3D91")
-    _drow("(-) Costo de Materias Primas",    -cv_mat,  ingr, indent=1, bg=_alt())
-    _srow("= UTILIDAD BRUTA",                ut_bruta, ingr)
-    _drow("(-) Mano de Obra Directa",        -cv_mod,  ingr, indent=1, bg=_alt())
-    _drow("(-) Mano de Obra Indirecta",      -cv_moi,  ingr, indent=1, bg=_alt())
-    _drow("(-) Costos Ind. Fabricación",     -cv_cif,  ingr, indent=1, bg=_alt())
-    _srow("= UTILIDAD BRUTA INDUSTRIAL",     ut_bi,    ingr)
-    _drow("(-) Gastos de Ventas",            -gv,      ingr, indent=1, bg=_alt())
-    _drow("(-) Gastos Administrativos",      -ga,      ingr, indent=1, bg=_alt())
-    _srow("= UTILIDAD OPERACIONAL",          ut_op,    ingr)
-    _drow("(-) Gastos Financieros",          -gf,      ingr, indent=1, bg=_alt())
-    _srow("= UTILIDAD ANTES DE IMPUESTOS",   ut_ai,    ingr)
-    _drow("(-) Impuestos",                   -impues,  ingr, indent=1, bg=_alt())
-    _srow("= UTILIDAD NETA",                 ut_neta,  ingr, bg=C_TITULO_BG, fg="FFFFFF")
+    _srow("INGRESOS NETOS",                  ingr,     ingr, bg="0B3D91")
+    _drow("(-) Costo de Materias Primas",   -cv_mat,  ingr, indent=1, bg=_alt())
+    _srow("UTILIDAD BRUTA",                 ut_bruta, ingr)
+    _drow("(-) Mano de Obra Directa",       -cv_mod,  ingr, indent=1, bg=_alt())
+    _drow("(-) Mano de Obra Indirecta",     -cv_moi,  ingr, indent=1, bg=_alt())
+    _drow("(-) Costos Ind. Fabricacion",    -cv_cif,  ingr, indent=1, bg=_alt())
+    _srow("UTILIDAD BRUTA INDUSTRIAL",      ut_bi,    ingr)
+    _drow("(-) Gastos de Ventas",           -gv,      ingr, indent=1, bg=_alt())
+    _drow("(-) Gastos Administrativos",     -ga,      ingr, indent=1, bg=_alt())
+    _srow("UTILIDAD OPERACIONAL",           ut_op,    ingr)
+    _drow("(-) Gastos Financieros",         -gf,      ingr, indent=1, bg=_alt())
+    _srow("UTILIDAD ANTES DE IMPUESTOS",    ut_ai,    ingr)
+    _drow("(-) Impuestos",                  -impues,  ingr, indent=1, bg=_alt())
+    _srow("UTILIDAD NETA",                  ut_neta,  ingr, bg=C_TITULO_BG, fg="FFFFFF")
 
     row += 1  # spacer
 
