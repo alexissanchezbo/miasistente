@@ -868,7 +868,8 @@ def _write_dashboard_sheet(
             p_uop  = _sub(filas_proyecto,   "UTILIDAD OPERACIONAL",  proy)
             p_un   = _sub(filas_proyecto,   "UTILIDAD NETA",         proy)
             proj_data.append((proy, p_ingr, p_cmat, p_ub, p_gop, p_uop, p_un))
-        proj_data.sort(key=lambda x: x[1], reverse=True)
+        # x = (proy, p_ingr, p_cmat, p_ub, p_gop, p_uop, p_un)
+        proj_data.sort(key=lambda x: (x[6] / abs(x[1])) if abs(x[1]) > 0.001 else 0.0, reverse=True)
 
         alt_p = False
         for proy, p_ingr, p_cmat, p_ub, p_gop, p_uop, p_un in proj_data:
