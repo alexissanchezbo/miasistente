@@ -214,6 +214,108 @@ def load_mayor(file_input):
     return df
 
 
+def load_cartera(file_input):
+    """
+    Carga el archivo Cartera por Cobrar (Detallado).
+    Encabezados en fila 4 (índice 4). Columnas:
+        0=Cliente, 1=RazónSocial, 2=TipoDoc, 3=#Documento,
+        4=F.Emisión, 5=F.Vencimiento, 6=Vendedor, 7=CentroCosto,
+        9=PorVencer, 10=30d, 11=60d, 12=90d, 13=120d, 14=>120d,
+        15=Total, 16=Descripción, 17=ValorDoc, 18=Retenciones, 19=Cobros
+
+    Retorna DataFrame de filas de detalle (una por factura) con:
+        Cliente, RazonSocial, TipoDoc, NumDoc, FechaEmision, FechaVencimiento,
+        Vendedor, CentroCosto, PorVencer, D30, D60, D90, D120, D120p,
+        Total, Descripcion, ValorDoc, Retenciones, Cobros, Obra,
+        DiasVencido, FechaCorte
+    """
+    import re as _re
+
+    buf = _to_buffer(file_input)
+    try:
+        raw = pd.read_excel(buf, header=None, engine="xlrd")
+    except Exception:
+        buf.seek(0)
+        raw = pd.read_excel(buf, header=None, engine="openpyxl")
+
+    # Fecha de corte desde la cabecera del archivo
+    fecha_corte = pd.Timestamp.today().normalize()
+    for i in range(min(6, len(raw))):
+        for val in raw.iloc[i]:
+            if pd.notna(val) and "Fecha de Corte" in str(val):
+                m = _re.search(r'(\d{2}/\d{2}/\d{4})', str(val))
+                if m:
+                    fecha_corte = pd.to_datetime(m.group(1), dayfirst=True, errors="coerce")
+
+    # Localizar fila de encabezados
+    header_row = 4
+    for i, row in raw.iterrows():
+        vals = [str(v).strip() for v in row if pd.notna(v)]
+        if "Cliente" in vals and "Total" in vals and "Cobros" in vals:
+            header_row = i
+            break
+
+    rows = []
+    for _, row in raw.iloc[header_row + 1:].iterrows():
+        if len(row) < 20:
+            continue
+        # Omitir filas resumen de cliente (sin Razón Social ni # Documento)
+        razon   = str(row.iloc[1]).strip() if pd.notna(row.iloc[1]) else ""
+        num_doc = str(row.iloc[3]).strip() if pd.notna(row.iloc[3]) else ""
+        if not razon or razon in ("nan",) or not num_doc or num_doc in ("nan",):
+            continue
+
+        def _f(idx):
+            return float(pd.to_numeric(row.iloc[idx], errors="coerce") or 0)
+
+        cliente   = str(row.iloc[0]).strip() if pd.notna(row.iloc[0]) else ""
+        tipo_doc  = str(row.iloc[2]).strip() if pd.notna(row.iloc[2]) else ""
+        f_emi     = pd.to_datetime(row.iloc[4], dayfirst=True, errors="coerce")
+        f_venc    = pd.to_datetime(row.iloc[5], dayfirst=True, errors="coerce")
+        vendedor  = str(row.iloc[6]).strip() if pd.notna(row.iloc[6]) else ""
+        cc        = str(row.iloc[7]).strip() if pd.notna(row.iloc[7]) else ""
+        desc      = str(row.iloc[16]).strip() if pd.notna(row.iloc[16]) else ""
+
+        cc       = "" if cc       in ("nan", "None") else cc
+        vendedor = "" if vendedor in ("nan", "None") else vendedor
+
+        # Extraer OBRA de la Descripción
+        obra = ""
+        m = _re.search(r'OBRA:\s*(.+?)(?:\s+RQC\b|\s*$)', desc, _re.IGNORECASE)
+        if m:
+            obra = m.group(1).strip()
+
+        # Días vencido (desde fecha vencimiento a fecha de corte)
+        dias_vencido = int((fecha_corte - f_venc).days) if pd.notna(f_venc) else None
+
+        rows.append({
+            "Cliente":          cliente,
+            "RazonSocial":      razon,
+            "TipoDoc":          tipo_doc,
+            "NumDoc":           num_doc,
+            "FechaEmision":     f_emi,
+            "FechaVencimiento": f_venc,
+            "Vendedor":         vendedor,
+            "CentroCosto":      cc,
+            "PorVencer":        _f(9),
+            "D30":              _f(10),
+            "D60":              _f(11),
+            "D90":              _f(12),
+            "D120":             _f(13),
+            "D120p":            _f(14),
+            "Total":            _f(15),
+            "Descripcion":      desc,
+            "ValorDoc":         _f(17),
+            "Retenciones":      _f(18),
+            "Cobros":           _f(19),
+            "Obra":             obra,
+            "DiasVencido":      dias_vencido,
+            "FechaCorte":       fecha_corte,
+        })
+
+    return pd.DataFrame(rows)
+
+
 def load_transacciones(file_input):
     """
     Carga el archivo de Transacciones Detallado (cobros y pagos).

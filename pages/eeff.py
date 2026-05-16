@@ -1,7 +1,7 @@
 import streamlit as st
 import traceback
 from datetime import date, datetime
-from modules.loader import load_pyg_mes, load_pyg_cc, load_mayor, load_balance, load_transacciones
+from modules.loader import load_pyg_mes, load_pyg_cc, load_mayor, load_balance, load_cartera
 from modules.builder_mes import build_pyg_mes
 from modules.builder_proyecto import build_pyg_proyecto
 from modules.builder_cc import build_pyg_cc
@@ -97,10 +97,10 @@ with st.expander("📁 Archivos fuente", expanded=True):
             key="f_bg",
         )
         f_trx = st.file_uploader(
-            "6. Transacciones Detallado · Cobros y Pagos (.xls)  ⬅ opcional",
+            "6. Cartera por Cobrar · Facturas Pendientes (.xls)  ⬅ opcional",
             type=["xls", "xlsx"],
             key="f_trx",
-            help="Archivo de Transacciones del sistema contable. Habilita la pestaña Recuperación de Cartera.",
+            help="Reporte 'Cartera por Cobrar' del sistema contable. Habilita la pestaña Recuperación de Cartera con aging por cliente y por proyecto.",
         )
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -113,7 +113,7 @@ if not todos_listos:
     faltantes = sum(1 for f in archivos_requeridos if not f)
     st.info(f"⬆️ Faltan {faltantes} archivo(s) requerido(s) para habilitar la generación.")
 if f_trx:
-    st.success("✅ Archivo de Transacciones cargado — se generará la pestaña **Recuperación de Cartera**")
+    st.success("✅ Cartera por Cobrar cargada — se generará la pestaña **Recuperación de Cartera**")
 
 generar = st.button(
     "⚡ Generar Estados Financieros",
@@ -147,8 +147,8 @@ if generar and todos_listos:
 
         df_trx_data = None
         if f_trx:
-            prog.progress(58, "Cargando Transacciones (cobros y pagos)…")
-            df_trx_data = load_transacciones(f_trx)
+            prog.progress(58, "Cargando Cartera por Cobrar…")
+            df_trx_data = load_cartera(f_trx)
 
         prog.progress(62, "Construyendo P&G por Mes…")
         filas_mes, vcols_mes, _ = build_pyg_mes(df_mes)
@@ -181,7 +181,7 @@ if generar and todos_listos:
             observaciones       = obs,
             df_balance          = df_bg,
             df_mayor_completo   = df_mayor_all,
-            df_transacciones    = df_trx_data,
+            df_cartera          = df_trx_data,
             periodo_desc        = periodo_desc,
             titulo_mes          = f"Estado de Resultados Comparativo Mensual  |  {periodo_desc}",
             titulo_proyecto     = (
@@ -204,8 +204,7 @@ if generar and todos_listos:
         m4.metric("Proyectos detectados",    len([c for c in vcols_proy if c != "TOTAL"]))
         m5.metric("Observaciones",           len(obs))
         if df_trx_data is not None and not df_trx_data.empty:
-            cobros_n = len(df_trx_data[df_trx_data["Tipo"] == "Cobro"])
-            m6.metric("Cobros analizados", cobros_n)
+            m6.metric("Facturas en cartera", len(df_trx_data))
 
         nombre_archivo = f"Estados_Financieros_{periodo_desc.replace(' ', '_').replace('–', '-')}.xlsx"
 
