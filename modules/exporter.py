@@ -833,7 +833,8 @@ def _write_dashboard_sheet(
     # ══════════════════════════════════════════════════════════════════════════
     # SECCIÓN 4 — RESUMEN POR PROYECTO
     # ══════════════════════════════════════════════════════════════════════════
-    proyectos = [c2 for c2 in value_cols_proyecto if c2 != "TOTAL"]
+    proyectos = [c2 for c2 in value_cols_proyecto
+                 if c2 not in ("TOTAL", "Sin Proyecto")]
     if proyectos:
         ws.row_dimensions[row].height = 16
         ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=NCOLS)
