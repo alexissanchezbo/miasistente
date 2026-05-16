@@ -214,6 +214,82 @@ def load_mayor(file_input):
     return df
 
 
+def load_transacciones(file_input):
+    """
+    Carga el archivo de Transacciones Detallado (cobros y pagos).
+    Encabezados en fila 3 (índice 3). Columnas clave:
+        0=Fecha, 2=Persona, 3=Tipo, 16=CentroCosto,
+        17=CodComprobante, 18=FechaEmision, 20=Detalle, 21=Valor
+
+    Retorna DataFrame con columnas:
+        Fecha, Persona, Tipo, CodComprobante, FechaEmision,
+        CentroCosto, Detalle, Valor, Obra, DiasCobranza
+    """
+    import re as _re
+
+    buf = _to_buffer(file_input)
+    try:
+        raw = pd.read_excel(buf, header=None, engine="xlrd")
+    except Exception:
+        buf.seek(0)
+        raw = pd.read_excel(buf, header=None, engine="openpyxl")
+
+    # Localizar fila de encabezados (contiene "Fecha" y "Tipo")
+    header_row = 3
+    for i, row in raw.iterrows():
+        vals = [str(v).strip() for v in row if pd.notna(v)]
+        if "Fecha" in vals and "Tipo" in vals:
+            header_row = i
+            break
+
+    rows = []
+    for _, row in raw.iloc[header_row + 1:].iterrows():
+        if len(row) < 22:
+            continue
+        tipo = str(row.iloc[3]).strip() if pd.notna(row.iloc[3]) else ""
+        if tipo not in ("Cobro", "Pago"):
+            continue
+
+        fecha     = pd.to_datetime(row.iloc[0],  dayfirst=True, errors="coerce")
+        persona   = str(row.iloc[2]).strip()  if pd.notna(row.iloc[2])  else ""
+        cod_comp  = str(row.iloc[17]).strip() if pd.notna(row.iloc[17]) else ""
+        fecha_emi = pd.to_datetime(row.iloc[18], errors="coerce")
+        cc        = str(row.iloc[16]).strip() if pd.notna(row.iloc[16]) else ""
+        detalle   = str(row.iloc[20]).strip() if pd.notna(row.iloc[20]) else ""
+        valor     = float(pd.to_numeric(row.iloc[21], errors="coerce") or 0)
+
+        cc = "" if cc in ("nan", "None", "NaN") else cc
+
+        # Extraer nombre de OBRA del campo Detalle
+        obra = ""
+        m = _re.search(r'OBRA:\s*(.+?)(?:\s+RQC\b|\s*$)', detalle, _re.IGNORECASE)
+        if m:
+            obra = m.group(1).strip()
+
+        # Días de cobranza (Cobros con ambas fechas válidas)
+        dias = None
+        if tipo == "Cobro" and pd.notna(fecha) and pd.notna(fecha_emi):
+            dias = int((fecha - fecha_emi).days)
+
+        rows.append({
+            "Fecha":          fecha,
+            "Persona":        persona,
+            "Tipo":           tipo,
+            "CodComprobante": cod_comp,
+            "FechaEmision":   fecha_emi,
+            "CentroCosto":    cc,
+            "Detalle":        detalle,
+            "Valor":          valor,
+            "Obra":           obra,
+            "DiasCobranza":   dias,
+        })
+
+    df = pd.DataFrame(rows)
+    if not df.empty:
+        df["Fecha"] = pd.to_datetime(df["Fecha"], errors="coerce")
+    return df
+
+
 def load_balance(file_input):
     """
     Carga el Balance General (Estado de Situación Financiera).

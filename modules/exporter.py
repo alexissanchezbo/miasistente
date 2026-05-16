@@ -1006,6 +1006,275 @@ def _write_dashboard_sheet(
     ws.freeze_panes = "B4"
 
 
+def _write_cartera_sheet(ws, empresa, titulo, df_trx):
+    """
+    Recuperación de Cartera: DSO y aging por proyecto/obra y por cliente.
+    df_trx: DataFrame de load_transacciones()
+    """
+    NCOLS = 12
+
+    for col_l, w in [("A",1),("B",42),("C",16),("D",9),("E",12),
+                     ("F",10),("G",10),("H",14),("I",14),("J",14),("K",14),("L",11)]:
+        ws.column_dimensions[col_l].width = w
+
+    C_G   = "1E8449"   # verde  0-30d
+    C_Y   = "B7950B"   # ámbar  31-60d
+    C_O   = "CA6F1E"   # naranja 61-90d
+    C_R   = "922B21"   # rojo   +90d
+    C_SEC = "1C2833"
+    C_TBL = "16213E"
+    C_ALT = "EBF5FB"
+    C_TOT = "0F3460"
+
+    def _acolor(dias):
+        if dias is None or dias < 0: return "AAAAAA"
+        if dias <= 30:  return C_G
+        if dias <= 60:  return C_Y
+        if dias <= 90:  return C_O
+        return C_R
+
+    def _alabel(dias):
+        if dias is None or dias < 0: return "—"
+        if dias <= 30:  return "En plazo"
+        if dias <= 60:  return "Alerta"
+        if dias <= 90:  return "Tardío"
+        return "MORA"
+
+    # ── Títulos ──────────────────────────────────────────────────────────────
+    ws.row_dimensions[1].height = 24
+    ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=NCOLS)
+    c = ws.cell(1, 1, empresa)
+    c.font = _font(bold=True, color=C_TITULO_FG, size=14)
+    c.fill = _fill(C_TITULO_BG); c.alignment = _align("center")
+
+    ws.row_dimensions[2].height = 18
+    ws.merge_cells(start_row=2, start_column=1, end_row=2, end_column=NCOLS)
+    c = ws.cell(2, 1, titulo)
+    c.font = _font(bold=False, color=C_TITULO_FG, size=11)
+    c.fill = _fill(C_HEADER_BG); c.alignment = _align("center")
+
+    ws.row_dimensions[3].height = 6
+    for col in range(1, NCOLS + 1):
+        ws.cell(3, col).fill = _fill(C_HEADER_BG)
+
+    row = 4
+
+    # Datos vacíos
+    if df_trx is None or df_trx.empty:
+        ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=NCOLS)
+        ws.cell(row, 1, "Sin datos de transacciones cargados.").font = _font(size=10, color="888888")
+        return
+
+    cobros = df_trx[df_trx["Tipo"] == "Cobro"].copy()
+    cobros_d = cobros[cobros["DiasCobranza"].notna()].copy()
+
+    total_cobrado  = cobros["Valor"].sum()
+    n_cobros       = len(cobros)
+    dias_prom_gral = cobros_d["DiasCobranza"].mean() if not cobros_d.empty else 0
+    mora_monto     = cobros_d[cobros_d["DiasCobranza"] > 90]["Valor"].sum()
+    pct_mora       = mora_monto / total_cobrado if total_cobrado > 0 else 0
+
+    # ── KPIs ─────────────────────────────────────────────────────────────────
+    ws.row_dimensions[row].height = 20
+    ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=NCOLS)
+    c = ws.cell(row, 1, "  INDICADORES DE RECUPERACIÓN")
+    c.font = _font(bold=True, color="FFFFFF", size=11)
+    c.fill = _fill(C_SEC); c.alignment = _align("left")
+    row += 1
+
+    kpis = [
+        ("Total Cobrado",      total_cobrado,       FMT_MONEY, "0B3D91"),
+        ("# Cobros",           float(n_cobros),     "#,##0",   "154360"),
+        ("Días Prom. Cobro",   round(dias_prom_gral,1), "0.0", C_G if dias_prom_gral <= 30 else (C_Y if dias_prom_gral <= 60 else C_R)),
+        ("% en Mora +90d",     pct_mora,            FMT_PCT,   C_R if pct_mora > 0.1 else C_G),
+    ]
+    kpi_col_pairs = [(2,3),(4,5),(6,7),(8,9)]
+    ws.row_dimensions[row].height = 13
+    ws.row_dimensions[row+1].height = 20
+    for (c1, c2), (lbl, val, fmt, color) in zip(kpi_col_pairs, kpis):
+        for col in range(c1, c2+1):
+            ws.cell(row,   col).fill = _fill("F0F0F0")
+            ws.cell(row+1, col).fill = _fill("F8F9FA")
+        c_ = ws.cell(row, c1, lbl)
+        c_.font = _font(bold=False, color="777777", size=9)
+        c_.fill = _fill("F0F0F0"); c_.alignment = _align("left")
+        c_v = ws.cell(row+1, c1, val)
+        c_v.number_format = fmt
+        c_v.font = _font(bold=True, color=color, size=13)
+        c_v.fill = _fill("F8F9FA"); c_v.alignment = _align("left")
+    row += 3
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # SECCIÓN 1 — POR PROYECTO / OBRA
+    # ══════════════════════════════════════════════════════════════════════════
+    ws.row_dimensions[row].height = 20
+    ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=NCOLS)
+    c = ws.cell(row, 1, "  RECUPERACIÓN POR PROYECTO / OBRA  (días de cobro, mayor = más lento)")
+    c.font = _font(bold=True, color="FFFFFF", size=11)
+    c.fill = _fill(C_SEC); c.alignment = _align("left")
+    row += 1
+
+    ws.row_dimensions[row].height = 16
+    for col in range(1, NCOLS+1):
+        ws.cell(row, col).fill = _fill(C_TBL)
+    for col_n, hdr, al in [
+        (2,"Proyecto / Obra","left"),(3,"Total Cobrado","right"),
+        (4,"# Cobros","right"),(5,"Días Prom.","right"),
+        (6,"Días Mín.","right"),(7,"Días Máx.","right"),
+        (8,"0 – 30 d","right"),(9,"31 – 60 d","right"),
+        (10,"61 – 90 d","right"),(11,"+ 90 d","right"),
+        (12,"% En Plazo","right"),
+    ]:
+        c = ws.cell(row, col_n, hdr)
+        c.font = _font(bold=True, color="FFFFFF", size=9)
+        c.fill = _fill(C_TBL); c.alignment = _align(al)
+    ws.cell(row, 1).fill = _fill(C_TBL)
+    row += 1
+
+    cobros_d["Obra_lbl"] = cobros_d["Obra"].apply(
+        lambda x: x.strip() if (x and x.strip()) else "Sin Obra Asignada"
+    )
+
+    obra_data = []
+    for obra, grp in cobros_d.groupby("Obra_lbl"):
+        tot   = grp["Valor"].sum()
+        n     = len(grp)
+        dprom = grp["DiasCobranza"].mean()
+        dmin  = grp["DiasCobranza"].min()
+        dmax  = grp["DiasCobranza"].max()
+        b0    = grp[grp["DiasCobranza"] <= 30]["Valor"].sum()
+        b31   = grp[(grp["DiasCobranza"] > 30) & (grp["DiasCobranza"] <= 60)]["Valor"].sum()
+        b61   = grp[(grp["DiasCobranza"] > 60) & (grp["DiasCobranza"] <= 90)]["Valor"].sum()
+        b90p  = grp[grp["DiasCobranza"] > 90]["Valor"].sum()
+        pplazo = b0 / tot if tot > 0 else 0
+        obra_data.append((obra, tot, n, dprom, dmin, dmax, b0, b31, b61, b90p, pplazo))
+
+    obra_data.sort(key=lambda x: x[3], reverse=True)  # mayor días primero
+
+    alt = False
+    aging_col_map = {8: C_G, 9: C_Y, 10: C_O, 11: C_R}
+    for obra, tot, n, dprom, dmin, dmax, b0, b31, b61, b90p, pplazo in obra_data:
+        bg = C_ALT if alt else "FFFFFF"; alt = not alt
+        ws.row_dimensions[row].height = 13
+        for col in range(1, NCOLS+1):
+            ws.cell(row, col).fill = _fill(bg)
+
+        c = ws.cell(row, 2, obra)
+        c.font = _font(bold=False, color="1A1A2E", size=9)
+        c.fill = _fill(bg); c.alignment = _align("left")
+
+        for col_n, val, fmt in [(3,tot,FMT_MONEY),(4,float(n),"#,##0")]:
+            c_v = ws.cell(row, col_n, val)
+            c_v.number_format = fmt
+            c_v.font = _font(bold=False, color="1A1A2E", size=9)
+            c_v.fill = _fill(bg); c_v.alignment = _align("right")
+
+        dc = _acolor(dprom)
+        for col_n, val in [(5,round(dprom,1)),(6,int(dmin)),(7,int(dmax))]:
+            c_v = ws.cell(row, col_n, val)
+            c_v.number_format = "0"
+            c_v.font = _font(bold=(col_n==5), color=dc, size=9)
+            c_v.fill = _fill(bg); c_v.alignment = _align("right")
+
+        for col_n, val in [(8,b0),(9,b31),(10,b61),(11,b90p)]:
+            c_v = ws.cell(row, col_n, val)
+            c_v.number_format = FMT_MONEY
+            c_v.font = _font(bold=False, color=aging_col_map[col_n] if val > 0.01 else "CCCCCC", size=9)
+            c_v.fill = _fill(bg); c_v.alignment = _align("right")
+
+        pfg = C_G if pplazo >= 0.8 else (C_Y if pplazo >= 0.5 else C_R)
+        c_p = ws.cell(row, 12, pplazo)
+        c_p.number_format = FMT_PCT
+        c_p.font = _font(bold=True, color=pfg, size=9)
+        c_p.fill = _fill(bg); c_p.alignment = _align("right")
+        row += 1
+
+    # Fila TOTAL obras
+    ws.row_dimensions[row].height = 15
+    for col in range(1, NCOLS+1):
+        ws.cell(row, col).fill = _fill(C_TOT)
+    c = ws.cell(row, 2, f"TOTAL  ({len(obra_data)} obras / proyectos)")
+    c.font = _font(bold=True, color="FFFFFF", size=9)
+    c.fill = _fill(C_TOT); c.alignment = _align("left")
+    c_v = ws.cell(row, 3, total_cobrado)
+    c_v.number_format = FMT_MONEY
+    c_v.font = _font(bold=True, color="FFD700", size=9)
+    c_v.fill = _fill(C_TOT); c_v.alignment = _align("right")
+    c_d = ws.cell(row, 5, round(dias_prom_gral, 1))
+    c_d.number_format = "0.0"
+    c_d.font = _font(bold=True, color="DDDDDD", size=9)
+    c_d.fill = _fill(C_TOT); c_d.alignment = _align("right")
+    row += 2
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # SECCIÓN 2 — POR CLIENTE
+    # ══════════════════════════════════════════════════════════════════════════
+    ws.row_dimensions[row].height = 20
+    ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=NCOLS)
+    c = ws.cell(row, 1, "  COMPORTAMIENTO DE COBRO POR CLIENTE  (ordenado de más lento a más rápido)")
+    c.font = _font(bold=True, color="FFFFFF", size=11)
+    c.fill = _fill(C_SEC); c.alignment = _align("left")
+    row += 1
+
+    ws.row_dimensions[row].height = 16
+    for col in range(1, NCOLS+1):
+        ws.cell(row, col).fill = _fill(C_TBL)
+    for col_n, hdr, al in [
+        (2,"Cliente","left"),(3,"Total Cobrado","right"),
+        (4,"# Cobros","right"),(5,"Días Prom.","right"),
+        (6,"Días Máx.","right"),(7,"Estado","center"),
+    ]:
+        c = ws.cell(row, col_n, hdr)
+        c.font = _font(bold=True, color="FFFFFF", size=9)
+        c.fill = _fill(C_TBL); c.alignment = _align(al)
+    ws.cell(row, 1).fill = _fill(C_TBL)
+    row += 1
+
+    cli_data = []
+    for persona, grp in cobros_d.groupby("Persona"):
+        tot   = grp["Valor"].sum()
+        n     = len(grp)
+        dprom = grp["DiasCobranza"].mean()
+        dmax  = grp["DiasCobranza"].max()
+        cli_data.append((persona, tot, n, dprom, dmax))
+    cli_data.sort(key=lambda x: x[3], reverse=True)
+
+    alt = False
+    for persona, tot, n, dprom, dmax in cli_data:
+        bg = C_ALT if alt else "FFFFFF"; alt = not alt
+        ws.row_dimensions[row].height = 13
+        for col in range(1, NCOLS+1):
+            ws.cell(row, col).fill = _fill(bg)
+
+        c = ws.cell(row, 2, persona)
+        c.font = _font(bold=False, color="1A1A2E", size=9)
+        c.fill = _fill(bg); c.alignment = _align("left")
+
+        c_v = ws.cell(row, 3, tot)
+        c_v.number_format = FMT_MONEY
+        c_v.font = _font(bold=False, color="1A1A2E", size=9)
+        c_v.fill = _fill(bg); c_v.alignment = _align("right")
+
+        c_n = ws.cell(row, 4, float(n))
+        c_n.number_format = "#,##0"
+        c_n.font = _font(bold=False, color="1A1A2E", size=9)
+        c_n.fill = _fill(bg); c_n.alignment = _align("right")
+
+        dc = _acolor(dprom)
+        for col_n, val in [(5, round(dprom,1)), (6, int(dmax))]:
+            c_v2 = ws.cell(row, col_n, val)
+            c_v2.number_format = "0.0" if col_n == 5 else "0"
+            c_v2.font = _font(bold=(col_n==5), color=dc, size=9)
+            c_v2.fill = _fill(bg); c_v2.alignment = _align("right")
+
+        c_e = ws.cell(row, 7, _alabel(dprom))
+        c_e.font = _font(bold=True, color=_acolor(dprom), size=9)
+        c_e.fill = _fill(bg); c_e.alignment = _align("center")
+        row += 1
+
+    ws.freeze_panes = "B4"
+
+
 def _write_observaciones_sheet(ws, observaciones, empresa):
     """Escribe la pestaña de observaciones."""
     ws.row_dimensions[1].height = 22
@@ -1068,6 +1337,7 @@ def exportar_excel(
     observaciones,
     df_balance=None,
     df_mayor_completo=None,
+    df_transacciones=None,
     periodo_desc="",
     titulo_mes="Estado de Resultados Comparativo Mensual",
     titulo_proyecto="Estado de Resultados por Proyecto (MOD y CIF prorrateados por ingresos)",
@@ -1103,7 +1373,15 @@ def exportar_excel(
     ws_cc = wb.create_sheet("P&G por Centro de Costo")
     _write_pyg_sheet(ws_cc, empresa, titulo_cc, filas_cc, value_cols_cc)
 
-    # ── Pestaña 5: Estado de Situación Financiera (Balance) ──────────────────
+    # ── Pestaña 5: Recuperación de Cartera ───────────────────────────────────
+    ws_cart = wb.create_sheet("Recuperación de Cartera")
+    _write_cartera_sheet(
+        ws_cart, empresa,
+        f"Recuperación de Cartera  ·  {periodo_desc}",
+        df_transacciones,
+    )
+
+    # ── Pestaña 6: Estado de Situación Financiera (Balance) ──────────────────
     if df_balance is not None and not df_balance.empty:
         ws_bg = wb.create_sheet("Situación Financiera")
         _write_balance_sheet(ws_bg, empresa, titulo_balance, df_balance)
