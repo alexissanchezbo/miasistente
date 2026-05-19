@@ -177,6 +177,18 @@ if generar and todos_listos:
         prog.progress(62, "Construyendo P&G por Mes…")
         filas_mes, vcols_mes, _ = build_pyg_mes(df_mes)
 
+        # 5. Sincronizar 3.1.7.1 del balance con la utilidad neta del P&G
+        ut_neta_pyg = next(
+            (float(f.get("values", {}).get("TOTAL", 0) or 0)
+             for f in filas_mes
+             if f.get("tipo") == "subtotal"
+             and "UTILIDAD NETA" in f.get("concepto", "").upper()),
+            0.0,
+        )
+        mask_317 = df_bg["Cod"].astype(str).str.strip() == "3.1.7.1"
+        if mask_317.any():
+            df_bg.loc[mask_317, "Total"] = ut_neta_pyg
+
         prog.progress(72, f"Construyendo P&G por Proyecto ({fecha_ini} → {fecha_fin})…")
         filas_proy, vcols_proy = build_pyg_proyecto(
             df_ing, df_cos, df_mes,
