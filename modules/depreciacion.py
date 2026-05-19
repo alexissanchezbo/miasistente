@@ -198,62 +198,41 @@ def inyectar_en_df_cc(df_cc: pd.DataFrame, n_meses: int) -> pd.DataFrame:
 def ajustar_balance(df_bg: pd.DataFrame, n_meses: int) -> pd.DataFrame:
     """
     Ajusta el balance general para reflejar la depreciación devengada
-    del período que aún no ha sido contabilizada:
+    del período que aún no ha sido contabilizada.
 
-    1. Aumenta las cuentas de depreciación acumulada (1.2.1.11.x):
-       las hace más negativas (mayor deducción al activo bruto).
-    2. Reduce el resultado del período en patrimonio (cuenta 3.x)
-       por el mismo importe total.
+    Solo toca las cuentas de depreciación acumulada (1.2.1.11.x):
+    las hace más negativas (mayor deducción al activo bruto).
+
+    La utilidad del período NO se ajusta aquí porque la app la calcula
+    directamente desde el P&G — y el P&G ya incluye la depreciación.
+    Así el balance cuadra automáticamente:
+        ACTIVOS (con más dep acum) = PASIVOS + PATRIMONIO + UTILIDAD_PYG (con dep)
 
     Parámetros
     ----------
     df_bg   : DataFrame de load_balance() — Cod, Concepto, Total
-    n_meses : meses del período (para calcular dep total)
+    n_meses : meses del período (para calcular dep total del período)
 
     Retorna df_bg ajustado.
     """
     df = df_bg.copy()
     cod_col = "Cod"
-    dep_total_global = 0.0
 
-    # ── 1. Ajustar cuentas de depreciación acumulada ─────────────────────
     for cuenta_pyg, cuenta_bg in DEP_BALANCE_MAP.items():
         dep_mensual = DEP_MENSUAL_FIJA.get(cuenta_pyg, 0.0)
         dep_periodo = dep_mensual * n_meses
-        dep_total_global += dep_periodo
 
         mask = df[cod_col].astype(str).str.strip() == cuenta_bg
         if mask.any():
-            # La dep acumulada es contra-activo: restar hace el activo neto menor
+            # Contra-activo: restar aumenta la deducción sobre el activo bruto
             df.loc[mask, "Total"] = df.loc[mask, "Total"] - dep_periodo
         else:
-            # La cuenta no está en el balance → agregar como fila nueva
-            nueva = {
+            # La cuenta no aparece en el archivo → agregar fila nueva
+            df = pd.concat([df, pd.DataFrame([{
                 "Cod":      cuenta_bg,
                 "Concepto": DEP_ETIQUETAS.get(cuenta_pyg, f"Dep. Acum. {cuenta_bg}"),
-                "Total":    -dep_periodo,   # negativo = contra-activo
-            }
-            df = pd.concat([df, pd.DataFrame([nueva])], ignore_index=True)
-
-    # ── 2. Ajustar resultado del período en Patrimonio ────────────────────
-    # Buscar cuenta de resultado del ejercicio: primera cuenta 3.x que
-    # contenga "resultado", "utilidad" o "ejercicio" en el Concepto.
-    keywords = ("resultado", "utilidad", "ejercicio", "periodo", "período")
-    mask_res = (
-        df[cod_col].astype(str).str.startswith("3") &
-        df["Concepto"].astype(str).str.lower().str.contains(
-            "|".join(keywords), regex=True
-        )
-    )
-    if mask_res.any():
-        df.loc[mask_res, "Total"] = df.loc[mask_res, "Total"] - dep_total_global
-    else:
-        # Crear fila de ajuste si no se encuentra la cuenta
-        df = pd.concat([df, pd.DataFrame([{
-            "Cod":      "3.ADJ.DEP",
-            "Concepto": "Ajuste depreciación devengada (gestión)",
-            "Total":    -dep_total_global,
-        }])], ignore_index=True)
+                "Total":    -dep_periodo,    # negativo = contra-activo
+            }])], ignore_index=True)
 
     return df
 
