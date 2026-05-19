@@ -1,7 +1,8 @@
 import streamlit as st
 import traceback
 from datetime import date, datetime
-from modules.loader import load_pyg_mes, load_pyg_cc, load_mayor, load_balance, load_cartera
+from modules.loader import load_pyg_mes, load_pyg_cc, load_mayor, load_balance, load_cartera, load_activos
+from modules.depreciacion import calcular_dep_mensual_por_cuenta, inyectar_en_df_mes, resumen_depreciacion
 from modules.builder_mes import build_pyg_mes
 from modules.builder_proyecto import build_pyg_proyecto
 from modules.builder_cc import build_pyg_cc
@@ -102,6 +103,13 @@ with st.expander("📁 Archivos fuente", expanded=True):
             key="f_trx",
             help="Reporte 'Cartera por Cobrar' del sistema contable. Habilita la pestaña Recuperación de Cartera con aging por cliente y por proyecto.",
         )
+        f_activos = st.file_uploader(
+            "7. Activos Fijos · Registro de Depreciación (.xls)  ⬅ opcional",
+            type=["xls", "xlsx"],
+            key="f_activos",
+            help="Exporta desde Contifico → Activos Fijos → Listado. "
+                 "Permite calcular la depreciación mensual devengada y distribuirla en el P&G por mes.",
+        )
 
 # ══════════════════════════════════════════════════════════════════════════════
 # BOTÓN DE GENERACIÓN
@@ -114,6 +122,8 @@ if not todos_listos:
     st.info(f"⬆️ Faltan {faltantes} archivo(s) requerido(s) para habilitar la generación.")
 if f_trx:
     st.success("✅ Cartera por Cobrar cargada — se generará la pestaña **Recuperación de Cartera**")
+if f_activos:
+    st.success("✅ Activos Fijos cargados — la depreciación mensual se distribuirá en el P&G por Mes")
 
 generar = st.button(
     "⚡ Generar Estados Financieros",
@@ -149,6 +159,18 @@ if generar and todos_listos:
         if f_trx:
             prog.progress(58, "Cargando Cartera por Cobrar…")
             df_trx_data = load_cartera(f_trx)
+
+        # ── Depreciación mensual devengada (archivo opcional) ─────────────
+        dep_resumen = []
+        dep_no_encontradas = []
+        if f_activos:
+            prog.progress(60, "Calculando depreciación mensual devengada…")
+            df_activos_data = load_activos(f_activos)
+            dep_map = calcular_dep_mensual_por_cuenta(df_activos_data)
+            n_meses_rep = len([c for c in df_mes.columns
+                               if c not in ("Cod", "Concepto", "Total", "TOTAL")])
+            dep_resumen = resumen_depreciacion(df_activos_data, dep_map, n_meses=n_meses_rep)
+            df_mes, _inyectadas, dep_no_encontradas = inyectar_en_df_mes(df_mes, dep_map)
 
         prog.progress(62, "Construyendo P&G por Mes…")
         filas_mes, vcols_mes, _ = build_pyg_mes(df_mes)
@@ -229,6 +251,29 @@ if generar and todos_listos:
                 st.warning(f"🟡 {len(avisos)} aviso(s) a revisar")
             if infos:
                 st.info(f"🔵 {len(infos)} nota(s) informativa(s)")
+
+        # ── Resumen de depreciación devengada ─────────────────────────────
+        if dep_resumen:
+            dep_total_mensual = sum(d["dep_mensual"] for d in dep_resumen)
+            dep_total_ytd     = sum(d["dep_ytd"]     for d in dep_resumen)
+            with st.expander(
+                f"📉 Depreciación mensual devengada distribuida — "
+                f"${dep_total_mensual:,.2f}/mes · YTD ${dep_total_ytd:,.2f}",
+                expanded=False,
+            ):
+                df_dep_show = pd.DataFrame([{
+                    "Categoría":    d["categoria"],
+                    "Cuenta":       d["cuenta"],
+                    "Activos":      d["activos_n"],
+                    "Dep. Mensual": f"${d['dep_mensual']:,.2f}",
+                    "YTD":          f"${d['dep_ytd']:,.2f}",
+                } for d in dep_resumen])
+                st.dataframe(df_dep_show, use_container_width=True, hide_index=True)
+                if dep_no_encontradas:
+                    st.warning(
+                        f"⚠️ Las siguientes cuentas no se encontraron en el P&G por Mes "
+                        f"y no pudieron inyectarse: {', '.join(dep_no_encontradas)}"
+                    )
 
         proyectos_lista = [c for c in vcols_proy if c != "TOTAL"]
         if proyectos_lista:

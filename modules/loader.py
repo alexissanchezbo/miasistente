@@ -417,3 +417,28 @@ def load_balance(file_input):
             data_rows.append({"Cod": cod, "Concepto": concepto, "Total": v or 0.0})
 
     return pd.DataFrame(data_rows)
+
+
+def load_activos(file_input):
+    """
+    Carga el registro de Activos Fijos exportado de Contifico.
+    Encabezados en fila 2 (índice 1). Columnas clave:
+        Fecha Compra, Codigo, Estado, Nombre, Categoria, Tipo,
+        Ubicacion, Valor Inicial, Valor Depreciado, Valor Actual, Valor Venta
+
+    Retorna DataFrame con esas columnas (solo activos Activos).
+    """
+    buf = _to_buffer(file_input)
+    try:
+        df = pd.read_excel(buf, header=1, engine="xlrd")
+    except Exception:
+        buf.seek(0)
+        df = pd.read_excel(buf, header=1, engine="openpyxl")
+
+    df.columns = [str(c).strip() for c in df.columns]
+
+    for col in ["Valor Inicial", "Valor Depreciado", "Valor Actual"]:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0.0)
+
+    return df
