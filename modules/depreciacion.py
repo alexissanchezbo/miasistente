@@ -61,6 +61,13 @@ Categorías sin activos: Edificios · Vehículos · Terreno (no deprecia)
 
 import pandas as pd
 
+# ── Mapeo cuentas P&G → cuentas Balance (dep. acumulada) ────────────────────
+DEP_BALANCE_MAP: dict[str, str] = {
+    "5.1.4.1.2":    "1.2.1.11.2",  # Dep. Acum. Maquinaria y Equipos
+    "5.2.1.1.46.3": "1.2.1.11.3",  # Dep. Acum. Muebles y Enseres
+    "5.2.1.1.46.4": "1.2.1.11.4",  # Dep. Acum. Equipos de Computación
+}
+
 # ── MONTOS FIJOS (actualizar aquí cuando cambien los activos) ─────────────────
 # {cuenta_contable: depreciación_mensual_$}
 DEP_MENSUAL_FIJA: dict[str, float] = {
@@ -111,6 +118,144 @@ def inyectar_en_df_mes(df_mes: pd.DataFrame) -> tuple[pd.DataFrame, list[str], l
             no_encontradas.append(cuenta)
 
     return df, inyectadas, no_encontradas
+
+
+def inyectar_en_df_cos(
+    df_cos: pd.DataFrame,
+    fecha_ini,
+    n_meses: int,
+) -> pd.DataFrame:
+    """
+    Agrega filas sintéticas de depreciación a df_cos SIN proyecto ni CC.
+    El builder_proyecto las prorateará automáticamente por ingresos de
+    cada proyecto, igual que cualquier otro gasto sin asignación.
+
+    Parámetros
+    ----------
+    df_cos    : DataFrame de load_mayor() — mayor de costos
+    fecha_ini : fecha de inicio del período (para que pase el filtro de fechas)
+    n_meses   : número de meses del período reportado
+
+    Retorna df_cos enriquecido con las filas de depreciación.
+    """
+    import pandas as _pd
+    rows = []
+    for cuenta, dep_mensual in DEP_MENSUAL_FIJA.items():
+        dep_total = dep_mensual * n_meses
+        rows.append({
+            "Fecha":       _pd.Timestamp(fecha_ini),
+            "Codigo":      cuenta,
+            "Cuenta":      DEP_ETIQUETAS.get(cuenta, f"Dep. {cuenta}"),
+            "CentroCosto": "",
+            "Proyecto":    "",           # sin proyecto → prorrateo automático
+            "TipoDoc":     "DEP",
+            "NumDoc":      "DEVENGADO",
+            "Tercero":     "",
+            "Debe":        dep_total,
+            "Haber":       0.0,
+            "Monto":       dep_total,    # Monto = Debe - Haber para cuentas 5.x
+        })
+    df_sintetico = _pd.DataFrame(rows)
+    return _pd.concat([df_cos, df_sintetico], ignore_index=True)
+
+
+def inyectar_en_df_cc(df_cc: pd.DataFrame, n_meses: int) -> pd.DataFrame:
+    """
+    Distribuye la depreciación del período en df_cc proporcionalmente
+    a los ingresos (cuentas 4.x) de cada Centro de Costo.
+
+    Parámetros
+    ----------
+    df_cc   : DataFrame de load_pyg_cc() — Cod, Concepto + columnas CC
+    n_meses : número de meses del período
+
+    Retorna df_cc con los valores de depreciación inyectados.
+    """
+    df = df_cc.copy()
+    cc_cols = [c for c in df.columns if c not in ("Cod", "Concepto", "TOTAL")]
+
+    # Calcular ingresos por CC para obtener el ratio de distribución
+    mask_ing = df["Cod"].astype(str).str.startswith("4")
+    if mask_ing.any() and cc_cols:
+        ing_por_cc = df.loc[mask_ing, cc_cols].sum()
+        total_ing  = ing_por_cc.sum()
+        ratio_cc   = (ing_por_cc / total_ing) if total_ing > 0 else {c: 1/len(cc_cols) for c in cc_cols}
+    else:
+        ratio_cc = {c: 1 / len(cc_cols) for c in cc_cols} if cc_cols else {}
+
+    cod_col = "Cod"
+    for cuenta, dep_mensual in DEP_MENSUAL_FIJA.items():
+        dep_total = dep_mensual * n_meses
+        mask = df[cod_col].astype(str).str.strip() == cuenta
+        if mask.any():
+            for cc in cc_cols:
+                df.loc[mask, cc] = dep_total * float(ratio_cc.get(cc, 0))
+            if "TOTAL" in df.columns:
+                df.loc[mask, "TOTAL"] = dep_total
+    return df
+
+
+def ajustar_balance(df_bg: pd.DataFrame, n_meses: int) -> pd.DataFrame:
+    """
+    Ajusta el balance general para reflejar la depreciación devengada
+    del período que aún no ha sido contabilizada:
+
+    1. Aumenta las cuentas de depreciación acumulada (1.2.1.11.x):
+       las hace más negativas (mayor deducción al activo bruto).
+    2. Reduce el resultado del período en patrimonio (cuenta 3.x)
+       por el mismo importe total.
+
+    Parámetros
+    ----------
+    df_bg   : DataFrame de load_balance() — Cod, Concepto, Total
+    n_meses : meses del período (para calcular dep total)
+
+    Retorna df_bg ajustado.
+    """
+    df = df_bg.copy()
+    cod_col = "Cod"
+    dep_total_global = 0.0
+
+    # ── 1. Ajustar cuentas de depreciación acumulada ─────────────────────
+    for cuenta_pyg, cuenta_bg in DEP_BALANCE_MAP.items():
+        dep_mensual = DEP_MENSUAL_FIJA.get(cuenta_pyg, 0.0)
+        dep_periodo = dep_mensual * n_meses
+        dep_total_global += dep_periodo
+
+        mask = df[cod_col].astype(str).str.strip() == cuenta_bg
+        if mask.any():
+            # La dep acumulada es contra-activo: restar hace el activo neto menor
+            df.loc[mask, "Total"] = df.loc[mask, "Total"] - dep_periodo
+        else:
+            # La cuenta no está en el balance → agregar como fila nueva
+            nueva = {
+                "Cod":      cuenta_bg,
+                "Concepto": DEP_ETIQUETAS.get(cuenta_pyg, f"Dep. Acum. {cuenta_bg}"),
+                "Total":    -dep_periodo,   # negativo = contra-activo
+            }
+            df = pd.concat([df, pd.DataFrame([nueva])], ignore_index=True)
+
+    # ── 2. Ajustar resultado del período en Patrimonio ────────────────────
+    # Buscar cuenta de resultado del ejercicio: primera cuenta 3.x que
+    # contenga "resultado", "utilidad" o "ejercicio" en el Concepto.
+    keywords = ("resultado", "utilidad", "ejercicio", "periodo", "período")
+    mask_res = (
+        df[cod_col].astype(str).str.startswith("3") &
+        df["Concepto"].astype(str).str.lower().str.contains(
+            "|".join(keywords), regex=True
+        )
+    )
+    if mask_res.any():
+        df.loc[mask_res, "Total"] = df.loc[mask_res, "Total"] - dep_total_global
+    else:
+        # Crear fila de ajuste si no se encuentra la cuenta
+        df = pd.concat([df, pd.DataFrame([{
+            "Cod":      "3.ADJ.DEP",
+            "Concepto": "Ajuste depreciación devengada (gestión)",
+            "Total":    -dep_total_global,
+        }])], ignore_index=True)
+
+    return df
 
 
 def resumen_depreciacion(n_meses: int = 1) -> list[dict]:

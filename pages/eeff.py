@@ -2,7 +2,11 @@ import streamlit as st
 import traceback
 from datetime import date, datetime
 from modules.loader import load_pyg_mes, load_pyg_cc, load_mayor, load_balance, load_cartera
-from modules.depreciacion import inyectar_en_df_mes, resumen_depreciacion
+from modules.depreciacion import (
+    inyectar_en_df_mes, inyectar_en_df_cos,
+    inyectar_en_df_cc, ajustar_balance,
+    resumen_depreciacion,
+)
 from modules.builder_mes import build_pyg_mes
 from modules.builder_proyecto import build_pyg_proyecto
 from modules.builder_cc import build_pyg_cc
@@ -152,10 +156,22 @@ if generar and todos_listos:
             df_trx_data = load_cartera(f_trx)
 
         # ── Depreciación mensual devengada (fija, quemada en código) ──────
-        prog.progress(60, "Distribuyendo depreciación mensual devengada…")
+        prog.progress(60, "Distribuyendo depreciación devengada en todos los formatos…")
         n_meses_rep = len([c for c in df_mes.columns
                            if c not in ("Cod", "Concepto", "Total", "TOTAL")])
-        df_mes, _dep_inyectadas, dep_no_encontradas = inyectar_en_df_mes(df_mes)
+
+        # 1. P&G por Mes — un monto fijo por columna de mes
+        df_mes, _dep_iny, dep_no_encontradas = inyectar_en_df_mes(df_mes)
+
+        # 2. Mayor de costos — filas sintéticas sin proyecto (prorrateo automático)
+        df_cos = inyectar_en_df_cos(df_cos, fecha_ini, n_meses_rep)
+
+        # 3. P&G por CC — distribución proporcional a ingresos por CC
+        df_cc = inyectar_en_df_cc(df_cc, n_meses_rep)
+
+        # 4. Balance General — ajuste dep acumulada + resultado patrimonio
+        df_bg = ajustar_balance(df_bg, n_meses_rep)
+
         dep_resumen = resumen_depreciacion(n_meses=n_meses_rep)
 
         prog.progress(62, "Construyendo P&G por Mes…")
